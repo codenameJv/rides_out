@@ -11,7 +11,7 @@ class RideTrackingState {
   final List<RoutePointModel> points;
   final DateTime? startTime;
   final Duration elapsedDuration;
-  final double distanceMiles;
+  final double distanceKm;
 
   const RideTrackingState({
     this.isTracking = false,
@@ -20,7 +20,7 @@ class RideTrackingState {
     this.points = const [],
     this.startTime,
     this.elapsedDuration = Duration.zero,
-    this.distanceMiles = 0,
+    this.distanceKm = 0,
   });
 
   RideTrackingState copyWith({
@@ -30,7 +30,7 @@ class RideTrackingState {
     List<RoutePointModel>? points,
     DateTime? startTime,
     Duration? elapsedDuration,
-    double? distanceMiles,
+    double? distanceKm,
   }) {
     return RideTrackingState(
       isTracking: isTracking ?? this.isTracking,
@@ -39,7 +39,7 @@ class RideTrackingState {
       points: points ?? this.points,
       startTime: startTime ?? this.startTime,
       elapsedDuration: elapsedDuration ?? this.elapsedDuration,
-      distanceMiles: distanceMiles ?? this.distanceMiles,
+      distanceKm: distanceKm ?? this.distanceKm,
     );
   }
 }
@@ -65,8 +65,8 @@ class RideTrackingNotifier extends StateNotifier<RideTrackingState> {
       double dist = 0;
       if (newPoints.length >= 2) {
         final prev = newPoints[newPoints.length - 2];
-        dist = state.distanceMiles +
-            DistanceCalculator.distanceMiles(
+        dist = state.distanceKm +
+            DistanceCalculator.distanceKm(
               prev.latitude,
               prev.longitude,
               point.latitude,
@@ -75,7 +75,7 @@ class RideTrackingNotifier extends StateNotifier<RideTrackingState> {
       }
       state = state.copyWith(
         points: newPoints,
-        distanceMiles: dist,
+        distanceKm: dist,
         elapsedDuration: state.startTime != null
             ? DateTime.now().difference(state.startTime!)
             : Duration.zero,

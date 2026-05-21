@@ -7,7 +7,7 @@ import '../../trips/providers/trips_provider.dart';
 class TripStatistics {
   final int totalTrips;
   final Map<TripStatus, int> tripsByStatus;
-  final double totalMiles;
+  final double totalKm;
   final double totalSpent;
   final double averageDurationDays;
   final Map<StopType, int> stopTypeCounts;
@@ -18,7 +18,7 @@ class TripStatistics {
   const TripStatistics({
     this.totalTrips = 0,
     this.tripsByStatus = const {},
-    this.totalMiles = 0,
+    this.totalKm = 0,
     this.totalSpent = 0,
     this.averageDurationDays = 0,
     this.stopTypeCounts = const {},
@@ -40,8 +40,8 @@ final tripStatisticsProvider = Provider<TripStatistics>((ref) {
     if (count > 0) byStatus[status] = count;
   }
 
-  // Total miles
-  double totalMiles = 0;
+  // Total km
+  double totalKm = 0;
   for (final trip in trips) {
     final points = trip.stops
         .where((s) => s.location != null)
@@ -51,7 +51,7 @@ final tripStatisticsProvider = Provider<TripStatistics>((ref) {
       final coords = points
           .map((s) => (s.location!.latitude, s.location!.longitude))
           .toList();
-      totalMiles += DistanceCalculator.totalDistance(coords);
+      totalKm += DistanceCalculator.totalDistance(coords);
     }
   }
 
@@ -111,7 +111,7 @@ final tripStatisticsProvider = Provider<TripStatistics>((ref) {
   return TripStatistics(
     totalTrips: trips.length,
     tripsByStatus: byStatus,
-    totalMiles: totalMiles,
+    totalKm: totalKm,
     totalSpent: totalSpent,
     averageDurationDays: avgDuration,
     stopTypeCounts: stopCounts,

@@ -9,7 +9,6 @@ import '../../features/expenses/screens/expense_form_screen.dart';
 import '../../features/maps/screens/trip_map_screen.dart';
 import '../../features/maps/screens/ride_tracking_screen.dart';
 import '../../features/maps/screens/trip_replay_screen.dart';
-import '../../features/fuel_calculator/screens/fuel_calculator_screen.dart';
 import '../../features/statistics/screens/statistics_screen.dart';
 import '../../features/settings/settings_screen.dart';
 
@@ -78,13 +77,6 @@ class AppRouter {
             builder: (context, state) {
               final id = state.pathParameters['id']!;
               return TripMapScreen(tripId: id);
-            },
-          ),
-          GoRoute(
-            path: 'fuel',
-            builder: (context, state) {
-              final id = state.pathParameters['id']!;
-              return FuelCalculatorScreen(tripId: id);
             },
           ),
           GoRoute(

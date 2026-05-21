@@ -47,6 +47,7 @@ class _TripReplayScreenState extends ConsumerState<TripReplayScreen>
     with TickerProviderStateMixin {
   final MapController _mapController = MapController();
   late AnimationController _animationController;
+  late AnimationController _pulseController;
 
   List<LatLng> _routePoints = [];
   List<_RouteSegment> _segments = [];
@@ -57,12 +58,26 @@ class _TripReplayScreenState extends ConsumerState<TripReplayScreen>
   bool _isLoadingRoute = true;
   Timer? _stopCardTimer;
 
+  // Per-segment distances in km (segment i = stop i → stop i+1)
+  List<double> _segmentDistances = [];
+
+  // Smooth zoom state
+  double _currentZoom = 15.0;
+  static const double _cruiseZoom = 15.0;
+  static const double _stopZoom = 15.5;
+
   @override
   void initState() {
     super.initState();
     _animationController = AnimationController(vsync: this);
     _animationController.addListener(_onAnimationTick);
     _animationController.addStatusListener(_onAnimationStatus);
+
+    // Pulse animation for rider marker glow
+    _pulseController = AnimationController(
+      vsync: this,
+      duration: const Duration(milliseconds: 1500),
+    )..repeat(reverse: true);
 
     // Defer setup to allow ref to be available
     WidgetsBinding.instance.addPostFrameCallback((_) {
@@ -110,7 +125,7 @@ class _TripReplayScreenState extends ConsumerState<TripReplayScreen>
     for (final leg in legs) {
       double legDist = 0;
       for (int i = 0; i < leg.length - 1; i++) {
-        legDist += DistanceCalculator.distanceMiles(
+        legDist += DistanceCalculator.distanceKm(
           leg[i].latitude,
           leg[i].longitude,
           leg[i + 1].latitude,
@@ -132,7 +147,7 @@ class _TripReplayScreenState extends ConsumerState<TripReplayScreen>
       final legPoints = legs[i];
       final cumDists = <double>[0.0];
       for (int j = 0; j < legPoints.length - 1; j++) {
-        final d = DistanceCalculator.distanceMiles(
+        final d = DistanceCalculator.distanceKm(
           legPoints[j].latitude,
           legPoints[j].longitude,
           legPoints[j + 1].latitude,
@@ -151,17 +166,27 @@ class _TripReplayScreenState extends ConsumerState<TripReplayScreen>
       cumulative += fraction;
     }
 
-    // Calculate duration: ~3s per segment base, scaled by distance
-    final baseDuration = legs.length * 3.0;
-    final totalSeconds = baseDuration.clamp(10.0, 60.0);
-    _animationController.duration =
-        Duration(milliseconds: (totalSeconds * 1000 / _speed).round());
+    // Store each segment's distance in km
+    _segmentDistances =
+        _segments.map((s) => s.cumulativeDistances.last).toList();
+
+    _animationController.duration = _calcDuration();
 
     setState(() {
       _isLoadingRoute = false;
       _currentStopIndex = 0;
       _showStopCard = true;
     });
+  }
+
+  Duration _calcDuration() {
+    double totalDist = 0;
+    for (final seg in _segments) {
+      totalDist += seg.cumulativeDistances.last;
+    }
+    // ~4s per km, clamped 20-90s
+    final totalSeconds = (totalDist * 4.0).clamp(20.0, 90.0);
+    return Duration(milliseconds: (totalSeconds * 1000 / _speed).round());
   }
 
   /// Interpolate position along a segment's road points given local progress 0.0–1.0.
@@ -224,6 +249,7 @@ class _TripReplayScreenState extends ConsumerState<TripReplayScreen>
   }
 
   void _onAnimationTick() {
+    // Linear value — constant speed throughout
     final t = _animationController.value;
 
     if (_segments.isEmpty) return;
@@ -247,10 +273,16 @@ class _TripReplayScreenState extends ConsumerState<TripReplayScreen>
     // Interpolate position along road points
     final pos = _interpolateAlongSegment(currentSegment, segT);
 
-    // Calculate zoom for current segment
-    final zoom = _segmentZoom(currentSegment, segT);
+    // Smooth zoom — gently ease toward stop zoom when arriving
+    double targetZoom = _cruiseZoom;
+    if (segT > 0.85) {
+      final approach = (segT - 0.85) / 0.15; // 0→1 over last 15%
+      targetZoom = _cruiseZoom + (_stopZoom - _cruiseZoom) * approach;
+    }
+    // Lerp toward target to prevent sudden jumps
+    _currentZoom += (targetZoom - _currentZoom) * 0.1;
 
-    _mapController.move(pos, zoom);
+    _mapController.move(pos, _currentZoom);
 
     // Update stop index if changed
     final newStopIndex = segT > 0.95
@@ -268,34 +300,6 @@ class _TripReplayScreenState extends ConsumerState<TripReplayScreen>
         }
       });
     }
-  }
-
-  double _segmentZoom(_RouteSegment seg, double segT) {
-    final latDiff =
-        (seg.points.last.latitude - seg.points.first.latitude).abs();
-    final lngDiff =
-        (seg.points.last.longitude - seg.points.first.longitude).abs();
-    final maxDiff = latDiff > lngDiff ? latDiff : lngDiff;
-
-    double baseZoom;
-    if (maxDiff < 0.005) {
-      baseZoom = 14;
-    } else if (maxDiff < 0.02) {
-      baseZoom = 13;
-    } else if (maxDiff < 0.1) {
-      baseZoom = 12;
-    } else if (maxDiff < 0.5) {
-      baseZoom = 10;
-    } else {
-      baseZoom = 8;
-    }
-
-    // Zoom in slightly when arriving at a stop
-    if (segT > 0.9) {
-      baseZoom += (segT - 0.9) / 0.1 * 0.5; // up to +0.5 zoom
-    }
-
-    return baseZoom.clamp(8.0, 14.5);
   }
 
   void _onAnimationStatus(AnimationStatus status) {
@@ -320,6 +324,7 @@ class _TripReplayScreenState extends ConsumerState<TripReplayScreen>
     } else {
       if (_animationController.isCompleted) {
         _animationController.reset();
+        _currentZoom = _cruiseZoom;
         setState(() {
           _currentStopIndex = 0;
           _showStopCard = true;
@@ -332,6 +337,7 @@ class _TripReplayScreenState extends ConsumerState<TripReplayScreen>
 
   void _restart() {
     _animationController.reset();
+    _currentZoom = _cruiseZoom;
     setState(() {
       _currentStopIndex = 0;
       _showStopCard = true;
@@ -350,15 +356,11 @@ class _TripReplayScreenState extends ConsumerState<TripReplayScreen>
       }
     });
 
-    // Recalculate duration preserving current progress
     final currentValue = _animationController.value;
     final wasPlaying = _animationController.isAnimating;
     _animationController.stop();
 
-    final baseDuration = _segments.length * 3.0;
-    final totalSeconds = baseDuration.clamp(10.0, 60.0);
-    _animationController.duration =
-        Duration(milliseconds: (totalSeconds * 1000 / _speed).round());
+    _animationController.duration = _calcDuration();
 
     if (wasPlaying) {
       _animationController.forward(from: currentValue);
@@ -423,6 +425,7 @@ class _TripReplayScreenState extends ConsumerState<TripReplayScreen>
     _stopCardTimer?.cancel();
     _animationController.removeListener(_onAnimationTick);
     _animationController.removeStatusListener(_onAnimationStatus);
+    _pulseController.dispose();
     _animationController.dispose();
     _mapController.dispose();
     super.dispose();
@@ -488,6 +491,24 @@ class _TripReplayScreenState extends ConsumerState<TripReplayScreen>
         ? _stopsWithLocation[_currentStopIndex]
         : null;
 
+    // Distance info for the current stop
+    // Leg distance = distance of the segment leading TO this stop (segment index = stopIndex - 1)
+    String? legDistLabel;
+    String? cumulativeDistLabel;
+    if (_segmentDistances.isNotEmpty && _currentStopIndex > 0) {
+      final legIdx = _currentStopIndex - 1;
+      if (legIdx < _segmentDistances.length) {
+        final legKm = _segmentDistances[legIdx];
+        legDistLabel = DistanceCalculator.formatDistance(legKm);
+      }
+      // Cumulative = sum of all segments up to this stop
+      double cumKm = 0;
+      for (int i = 0; i < _currentStopIndex && i < _segmentDistances.length; i++) {
+        cumKm += _segmentDistances[i];
+      }
+      cumulativeDistLabel = DistanceCalculator.formatDistance(cumKm);
+    }
+
     return Scaffold(
       backgroundColor: AppColors.background,
       extendBodyBehindAppBar: true,
@@ -519,7 +540,7 @@ class _TripReplayScreenState extends ConsumerState<TripReplayScreen>
                 mapController: _mapController,
                 options: MapOptions(
                   initialCenter: center,
-                  initialZoom: 12,
+                  initialZoom: _cruiseZoom,
                   interactionOptions: const InteractionOptions(
                     flags: InteractiveFlag.pinchZoom | InteractiveFlag.drag,
                   ),
@@ -536,18 +557,29 @@ class _TripReplayScreenState extends ConsumerState<TripReplayScreen>
                       polylines: [
                         Polyline(
                           points: _routePoints,
-                          strokeWidth: AppDimensions.mapLineWidth,
-                          color: AppColors.textHint.withValues(alpha: 0.3),
+                          strokeWidth: 2,
+                          color: AppColors.textHint.withValues(alpha: 0.25),
                         ),
                       ],
                     ),
-                  // Bright drawn route
+                  // Drawn route glow
                   if (drawnPoints.length >= 2)
                     PolylineLayer(
                       polylines: [
                         Polyline(
                           points: drawnPoints,
-                          strokeWidth: AppDimensions.mapLineWidth + 1,
+                          strokeWidth: 8,
+                          color: AppColors.primary.withValues(alpha: 0.15),
+                        ),
+                      ],
+                    ),
+                  // Drawn route solid
+                  if (drawnPoints.length >= 2)
+                    PolylineLayer(
+                      polylines: [
+                        Polyline(
+                          points: drawnPoints,
+                          strokeWidth: 4,
                           color: AppColors.primary,
                         ),
                       ],
@@ -566,26 +598,58 @@ class _TripReplayScreenState extends ConsumerState<TripReplayScreen>
                       );
                     }).toList(),
                   ),
-                  // Rider marker
+                  // Rider marker with pulsing glow
                   MarkerLayer(
                     markers: [
                       Marker(
                         point: riderPos,
-                        width: 20,
-                        height: 20,
-                        child: Container(
-                          decoration: BoxDecoration(
-                            color: AppColors.primary,
-                            shape: BoxShape.circle,
-                            border: Border.all(color: Colors.white, width: 3),
-                            boxShadow: [
-                              BoxShadow(
-                                color: AppColors.primary.withValues(alpha: 0.5),
-                                blurRadius: 10,
-                                spreadRadius: 2,
+                        width: 40,
+                        height: 40,
+                        child: AnimatedBuilder(
+                          animation: _pulseController,
+                          builder: (context, _) {
+                            final pulse = _pulseController.value;
+                            final glowSize = 28.0 + pulse * 10.0;
+                            final glowAlpha = 0.12 + pulse * 0.08;
+                            return Center(
+                              child: Stack(
+                                alignment: Alignment.center,
+                                children: [
+                                  // Pulsing outer glow
+                                  Container(
+                                    width: glowSize,
+                                    height: glowSize,
+                                    decoration: BoxDecoration(
+                                      shape: BoxShape.circle,
+                                      color: AppColors.primary
+                                          .withValues(alpha: glowAlpha),
+                                    ),
+                                  ),
+                                  // Core rider dot
+                                  Container(
+                                    width: 16,
+                                    height: 16,
+                                    decoration: BoxDecoration(
+                                      color: AppColors.primary,
+                                      shape: BoxShape.circle,
+                                      border: Border.all(
+                                        color: Colors.white,
+                                        width: 2.5,
+                                      ),
+                                      boxShadow: [
+                                        BoxShadow(
+                                          color: Colors.black
+                                              .withValues(alpha: 0.3),
+                                          blurRadius: 4,
+                                          offset: const Offset(0, 1),
+                                        ),
+                                      ],
+                                    ),
+                                  ),
+                                ],
                               ),
-                            ],
-                          ),
+                            );
+                          },
                         ),
                       ),
                     ],
@@ -645,6 +709,19 @@ class _TripReplayScreenState extends ConsumerState<TripReplayScreen>
                                   'Stop ${_currentStopIndex + 1} of ${_stopsWithLocation.length} \u00B7 ${currentStop.type.label}',
                                   style: AppTextStyles.bodySmall,
                                 ),
+                                if (legDistLabel != null)
+                                  Padding(
+                                    padding: const EdgeInsets.only(top: 2),
+                                    child: Text(
+                                      cumulativeDistLabel != null && cumulativeDistLabel != legDistLabel
+                                          ? '$legDistLabel leg \u00B7 $cumulativeDistLabel total'
+                                          : legDistLabel,
+                                      style: AppTextStyles.bodySmall.copyWith(
+                                        color: AppColors.primary,
+                                        fontWeight: FontWeight.w600,
+                                      ),
+                                    ),
+                                  ),
                               ],
                             ),
                           ),

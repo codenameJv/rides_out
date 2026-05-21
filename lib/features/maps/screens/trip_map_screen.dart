@@ -122,6 +122,36 @@ class _TripMapScreenState extends ConsumerState<TripMapScreen> {
     });
   }
 
+  Future<void> _onStopTapped(dynamic stop) async {
+    if (!_editMode) return;
+    if (stop.type != StopType.waypoint) return;
+
+    final confirmed = await showDialog<bool>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        title: const Text('Remove Waypoint'),
+        content: Text('Remove "${stop.name}" from the route?'),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(ctx, false),
+            child: const Text('Cancel'),
+          ),
+          TextButton(
+            onPressed: () => Navigator.pop(ctx, true),
+            style: TextButton.styleFrom(foregroundColor: AppColors.error),
+            child: const Text('Remove'),
+          ),
+        ],
+      ),
+    );
+
+    if (confirmed == true && mounted) {
+      await ref
+          .read(itineraryActionsProvider(widget.tripId))
+          .deleteStop(stop.id);
+    }
+  }
+
   Future<void> _searchAndAddWaypoint() async {
     final result = await Navigator.push<GeoPointModel>(
       context,
@@ -203,7 +233,7 @@ class _TripMapScreenState extends ConsumerState<TripMapScreen> {
                             size: 16, color: AppColors.primary),
                         const SizedBox(width: 8),
                         Text(
-                          'Tap the map to add waypoints',
+                          'Tap map to add \u00B7 Tap waypoint to remove',
                           style: AppTextStyles.bodySmall.copyWith(
                             color: AppColors.primary,
                             fontWeight: FontWeight.w600,
@@ -281,6 +311,7 @@ class _TripMapScreenState extends ConsumerState<TripMapScreen> {
                             ? trip.recordedRoute
                             : null,
                     onMapTap: _editMode ? _addWaypoint : null,
+                    onStopTap: _editMode ? _onStopTapped : null,
                   ),
                 ),
               ],

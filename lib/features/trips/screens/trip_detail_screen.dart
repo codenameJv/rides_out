@@ -42,11 +42,6 @@ class TripDetailScreen extends ConsumerWidget {
               tooltip: 'Map View',
               onPressed: () => context.push('/trip/${trip.id}/map'),
             ),
-            IconButton(
-              icon: const Icon(Icons.local_gas_station),
-              tooltip: 'Fuel Calculator',
-              onPressed: () => context.push('/trip/${trip.id}/fuel'),
-            ),
             PopupMenuButton(
               itemBuilder: (_) => [
                 const PopupMenuItem(value: 'edit', child: Text('Edit Trip')),

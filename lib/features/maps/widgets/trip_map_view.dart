@@ -2,12 +2,13 @@ import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_map/flutter_map.dart';
 import 'package:flutter_map_location_marker/flutter_map_location_marker.dart';
-import 'package:latlong2/latlong.dart';
+import 'package:latlong2/latlong.dart' hide DistanceCalculator;
 import '../../../core/constants/app_constants.dart';
 import '../../../core/services/osrm_service.dart';
 import '../../../core/services/tile_cache_service.dart';
 import '../../../core/theme/app_colors.dart';
 import '../../../core/theme/app_dimensions.dart';
+import '../../../core/utils/distance_calculator.dart';
 import '../../../local_db/models/enums.dart';
 import '../../../local_db/models/itinerary_stop_model.dart';
 import '../../../local_db/models/route_point_model.dart';
@@ -34,6 +35,7 @@ class TripMapView extends StatefulWidget {
 class _TripMapViewState extends State<TripMapView> {
   List<OsrmRoute>? _routeAlternatives;
   int _selectedRouteIndex = 0;
+  List<({LatLng midpoint, String label})> _legLabels = [];
 
   bool get _hasRecordedRoute =>
       widget.recordedRoute != null && widget.recordedRoute!.isNotEmpty;
@@ -63,6 +65,7 @@ class _TripMapViewState extends State<TripMapView> {
     if (!listEquals(oldWidget.stops, widget.stops)) {
       _routeAlternatives = null;
       _selectedRouteIndex = 0;
+      _legLabels = [];
       if (!_hasRecordedRoute) _fetchRoutes();
     }
   }
@@ -76,9 +79,23 @@ class _TripMapViewState extends State<TripMapView> {
     if (!mounted) return;
 
     final combined = OsrmService.buildCombinedAlternatives(legAlts);
+
+    // Build per-leg distance labels from primary legs
+    final labels = <({LatLng midpoint, String label})>[];
+    for (final alts in legAlts) {
+      final primary = alts.first;
+      final mid = primary.points[primary.points.length ~/ 2];
+      final km = primary.distanceMeters / 1000.0;
+      labels.add((
+        midpoint: mid,
+        label: DistanceCalculator.formatDistance(km),
+      ));
+    }
+
     setState(() {
       _routeAlternatives = combined;
       _selectedRouteIndex = 0;
+      _legLabels = labels;
     });
   }
 
@@ -183,6 +200,39 @@ class _TripMapViewState extends State<TripMapView> {
                 );
               }).toList(),
             ),
+            // Distance labels between stops
+            if (_legLabels.isNotEmpty && !_hasRecordedRoute)
+              MarkerLayer(
+                markers: _legLabels.map((leg) {
+                  return Marker(
+                    point: leg.midpoint,
+                    width: 70,
+                    height: 24,
+                    child: Container(
+                      padding: const EdgeInsets.symmetric(
+                        horizontal: 6,
+                        vertical: 2,
+                      ),
+                      decoration: BoxDecoration(
+                        color: AppColors.surface.withValues(alpha: 0.9),
+                        borderRadius: BorderRadius.circular(12),
+                        border: Border.all(
+                          color: AppColors.primary.withValues(alpha: 0.4),
+                        ),
+                      ),
+                      child: Text(
+                        leg.label,
+                        style: const TextStyle(
+                          fontSize: 11,
+                          fontWeight: FontWeight.w600,
+                          color: AppColors.primary,
+                        ),
+                        textAlign: TextAlign.center,
+                      ),
+                    ),
+                  );
+                }).toList(),
+              ),
             const RichAttributionWidget(
               attributions: [
                 TextSourceAttribution(AppConstants.osmAttribution),
@@ -205,9 +255,9 @@ class _TripMapViewState extends State<TripMapView> {
                 children: List.generate(_routeAlternatives!.length, (i) {
                   final alt = _routeAlternatives![i];
                   final isSelected = i == _selectedRouteIndex;
-                  final distMiles = alt.distanceMeters / 1609.34;
-                  final label = distMiles > 0
-                      ? 'Route ${i + 1} (${distMiles.toStringAsFixed(1)} mi)'
+                  final distKm = alt.distanceMeters / 1000.0;
+                  final label = distKm > 0
+                      ? 'Route ${i + 1} (${distKm.toStringAsFixed(1)} km)'
                       : 'Route ${i + 1}';
                   return Padding(
                     padding: EdgeInsets.only(

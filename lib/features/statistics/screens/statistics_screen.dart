@@ -61,8 +61,8 @@ class StatisticsScreen extends ConsumerWidget {
                       child: StatSummaryCard(
                         icon: Icons.straighten,
                         value: DistanceCalculator.formatDistance(
-                            stats.totalMiles),
-                        label: 'Miles',
+                            stats.totalKm),
+                        label: 'Kilometers',
                       ),
                     ),
                     const SizedBox(width: AppDimensions.paddingSM),

@@ -8,13 +8,17 @@ import 'package:geolocator/geolocator.dart';
 import 'package:go_router/go_router.dart';
 import 'package:latlong2/latlong.dart' hide DistanceCalculator;
 import '../../../core/constants/app_constants.dart';
+import '../../../core/services/osrm_service.dart';
 import '../../../core/services/tile_cache_service.dart';
 import '../../../core/theme/app_colors.dart';
 import '../../../core/theme/app_dimensions.dart';
 import '../../../core/theme/app_text_styles.dart';
 import '../../../core/utils/distance_calculator.dart';
+import '../../../local_db/models/enums.dart';
 import '../../../shared/widgets/confirm_dialog.dart';
+import '../../itinerary/providers/itinerary_provider.dart';
 import '../providers/ride_tracking_provider.dart';
+import '../widgets/stop_marker.dart';
 
 class RideTrackingScreen extends ConsumerStatefulWidget {
   final String tripId;
@@ -31,10 +35,56 @@ class _RideTrackingScreenState extends ConsumerState<RideTrackingScreen> {
   bool _hasStarted = false;
   bool _startError = false;
 
+  // Planned route guide
+  List<LatLng> _guideRoute = [];
+  // Per-leg info: midpoint + distance label
+  List<({LatLng midpoint, String label})> _legLabels = [];
+
   @override
   void initState() {
     super.initState();
-    WidgetsBinding.instance.addPostFrameCallback((_) => _startTracking());
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      _startTracking();
+      _loadGuideRoute();
+    });
+  }
+
+  Future<void> _loadGuideRoute() async {
+    final stops = ref.read(itineraryProvider(widget.tripId));
+    final stopsWithLocation = stops.where((s) => s.location != null).toList();
+
+    if (stopsWithLocation.length < 2) return;
+
+    final stopPoints = stopsWithLocation
+        .map((s) => LatLng(s.location!.latitude, s.location!.longitude))
+        .toList();
+
+    try {
+      final legAlts = await OsrmService.getRouteLegAlternatives(stopPoints);
+      if (!mounted) return;
+
+      final legs = legAlts.map((alts) => alts.first).toList();
+      final allPoints = <List<LatLng>>[];
+      final labels = <({LatLng midpoint, String label})>[];
+
+      for (final leg in legs) {
+        allPoints.add(leg.points);
+        // Midpoint of the leg polyline
+        final mid = leg.points[leg.points.length ~/ 2];
+        final km = leg.distanceMeters / 1000.0;
+        labels.add((
+          midpoint: mid,
+          label: DistanceCalculator.formatDistance(km),
+        ));
+      }
+
+      setState(() {
+        _guideRoute = OsrmService.flattenLegs(allPoints);
+        _legLabels = labels;
+      });
+    } catch (_) {
+      // Route fetch failed — ride tracking still works without guide
+    }
   }
 
   Future<void> _startTracking() async {
@@ -114,6 +164,8 @@ class _RideTrackingScreenState extends ConsumerState<RideTrackingScreen> {
   @override
   Widget build(BuildContext context) {
     final trackingState = ref.watch(rideTrackingProvider);
+    final stops = ref.watch(itineraryProvider(widget.tripId));
+    final stopsWithLocation = stops.where((s) => s.location != null).toList();
 
     if (_startError) {
       return Scaffold(
@@ -163,6 +215,18 @@ class _RideTrackingScreenState extends ConsumerState<RideTrackingScreen> {
                 userAgentPackageName: 'com.ridesout.app',
                 tileProvider: TileCacheService.tileProvider,
               ),
+              // Planned route guide (faded)
+              if (_guideRoute.length >= 2)
+                PolylineLayer(
+                  polylines: [
+                    Polyline(
+                      points: _guideRoute,
+                      strokeWidth: 4,
+                      color: AppColors.primary.withValues(alpha: 0.25),
+                    ),
+                  ],
+                ),
+              // Live recorded trail
               if (trailPoints.length >= 2)
                 PolylineLayer(
                   polylines: [
@@ -172,6 +236,58 @@ class _RideTrackingScreenState extends ConsumerState<RideTrackingScreen> {
                       color: AppColors.primary,
                     ),
                   ],
+                ),
+              // Itinerary stop markers
+              if (stopsWithLocation.isNotEmpty)
+                MarkerLayer(
+                  markers: stopsWithLocation.map((stop) {
+                    final isWaypoint = stop.type == StopType.waypoint;
+                    final size = isWaypoint
+                        ? AppDimensions.mapWaypointMarkerSize
+                        : AppDimensions.mapMarkerSize;
+                    return Marker(
+                      point: LatLng(
+                        stop.location!.latitude,
+                        stop.location!.longitude,
+                      ),
+                      width: size,
+                      height: isWaypoint ? size : size + 8,
+                      child: StopMarkerWidget(stop: stop),
+                    );
+                  }).toList(),
+                ),
+              // Distance labels between stops
+              if (_legLabels.isNotEmpty)
+                MarkerLayer(
+                  markers: _legLabels.map((leg) {
+                    return Marker(
+                      point: leg.midpoint,
+                      width: 70,
+                      height: 24,
+                      child: Container(
+                        padding: const EdgeInsets.symmetric(
+                          horizontal: 6,
+                          vertical: 2,
+                        ),
+                        decoration: BoxDecoration(
+                          color: AppColors.surface.withValues(alpha: 0.9),
+                          borderRadius: BorderRadius.circular(12),
+                          border: Border.all(
+                            color: AppColors.primary.withValues(alpha: 0.4),
+                          ),
+                        ),
+                        child: Text(
+                          leg.label,
+                          style: const TextStyle(
+                            fontSize: 11,
+                            fontWeight: FontWeight.w600,
+                            color: AppColors.primary,
+                          ),
+                          textAlign: TextAlign.center,
+                        ),
+                      ),
+                    );
+                  }).toList(),
                 ),
               CurrentLocationLayer(),
               const RichAttributionWidget(
@@ -234,7 +350,7 @@ class _RideTrackingScreenState extends ConsumerState<RideTrackingScreen> {
                     children: [
                       Text(
                         DistanceCalculator.formatDistance(
-                            trackingState.distanceMiles),
+                            trackingState.distanceKm),
                         style: AppTextStyles.headlineSmall,
                       ),
                       Text('Distance', style: AppTextStyles.bodySmall),
