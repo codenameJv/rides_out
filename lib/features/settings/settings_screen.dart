@@ -1,0 +1,165 @@
+import 'package:flutter/material.dart';
+import 'package:flutter_riverpod/flutter_riverpod.dart';
+import '../../core/constants/app_constants.dart';
+import '../../core/theme/app_colors.dart';
+import '../../core/theme/app_text_styles.dart';
+import '../../core/theme/app_dimensions.dart';
+import '../../core/services/hive_service.dart';
+import '../../core/services/tile_cache_service.dart';
+import '../../shared/widgets/confirm_dialog.dart';
+import '../trips/providers/trips_provider.dart';
+
+class SettingsScreen extends ConsumerStatefulWidget {
+  const SettingsScreen({super.key});
+
+  @override
+  ConsumerState<SettingsScreen> createState() => _SettingsScreenState();
+}
+
+class _SettingsScreenState extends ConsumerState<SettingsScreen> {
+  Future<int>? _cacheSizeFuture;
+
+  @override
+  void initState() {
+    super.initState();
+    _cacheSizeFuture = TileCacheService.getCacheSize();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final trips = ref.watch(tripsProvider);
+
+    return Scaffold(
+      backgroundColor: AppColors.background,
+      appBar: AppBar(title: const Text('Settings')),
+      body: ListView(
+        children: [
+          const SizedBox(height: AppDimensions.paddingSM),
+
+          // App info
+          _SectionTitle('About'),
+          ListTile(
+            leading:
+                const Icon(Icons.two_wheeler, color: AppColors.primary),
+            title: Text(AppConstants.appName,
+                style: AppTextStyles.titleMedium),
+            subtitle: const Text('v1.0.0'),
+          ),
+          const Divider(),
+
+          // Data
+          _SectionTitle('Data'),
+          ListTile(
+            leading: const Icon(Icons.storage, color: AppColors.textSecondary),
+            title: const Text('Trips stored'),
+            trailing: Text('${trips.length}',
+                style: AppTextStyles.titleMedium),
+          ),
+          ListTile(
+            leading:
+                const Icon(Icons.delete_forever, color: AppColors.error),
+            title: const Text('Delete all data'),
+            subtitle: const Text('Remove all trips and data'),
+            onTap: () async {
+              final confirmed = await ConfirmDialog.show(
+                context,
+                title: 'Delete All Data',
+                message:
+                    'This will permanently delete all ${trips.length} trips and their data. This cannot be undone.',
+                confirmLabel: 'Delete All',
+              );
+              if (confirmed) {
+                await HiveService.tripsBox.clear();
+                ref.invalidate(tripsProvider);
+                if (context.mounted) {
+                  ScaffoldMessenger.of(context).showSnackBar(
+                    const SnackBar(content: Text('All data deleted')),
+                  );
+                }
+              }
+            },
+          ),
+          const Divider(),
+
+          // Map cache
+          _SectionTitle('Map Cache'),
+          ListTile(
+            leading:
+                const Icon(Icons.map_outlined, color: AppColors.textSecondary),
+            title: const Text('Map tile cache'),
+            trailing: FutureBuilder<int>(
+              future: _cacheSizeFuture,
+              builder: (context, snapshot) {
+                if (snapshot.connectionState == ConnectionState.waiting) {
+                  return const SizedBox(
+                    width: 16,
+                    height: 16,
+                    child:
+                        CircularProgressIndicator(strokeWidth: 2),
+                  );
+                }
+                return Text(
+                  TileCacheService.formatCacheSize(snapshot.data ?? 0),
+                  style: AppTextStyles.titleMedium,
+                );
+              },
+            ),
+          ),
+          ListTile(
+            leading:
+                const Icon(Icons.delete_sweep, color: AppColors.error),
+            title: const Text('Clear map cache'),
+            subtitle: const Text('Remove cached map tiles'),
+            onTap: () async {
+              await TileCacheService.clearCache();
+              setState(() {
+                _cacheSizeFuture = TileCacheService.getCacheSize();
+              });
+              if (context.mounted) {
+                ScaffoldMessenger.of(context).showSnackBar(
+                  const SnackBar(content: Text('Map cache cleared')),
+                );
+              }
+            },
+          ),
+          const Divider(),
+
+          // Credits
+          _SectionTitle('Credits'),
+          const ListTile(
+            leading:
+                Icon(Icons.map, color: AppColors.textSecondary),
+            title: Text('Map tiles by OpenStreetMap'),
+            subtitle: Text(AppConstants.osmAttribution),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+class _SectionTitle extends StatelessWidget {
+  final String title;
+  const _SectionTitle(this.title);
+
+  @override
+  Widget build(BuildContext context) {
+    return Padding(
+      padding: const EdgeInsets.fromLTRB(
+        AppDimensions.paddingMD,
+        AppDimensions.paddingMD,
+        AppDimensions.paddingMD,
+        AppDimensions.paddingXS,
+      ),
+      child: Text(
+        title,
+        style: AppTextStyles.labelSmall.copyWith(
+          color: AppColors.primary,
+          fontSize: 12,
+          fontWeight: FontWeight.w600,
+          letterSpacing: 1.0,
+        ),
+      ),
+    );
+  }
+}

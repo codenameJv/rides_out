@@ -1,0 +1,84 @@
+{
+  "templates": [
+    {
+      "name": "Weekend Ride",
+      "items": [
+        {"label": "Helmet", "category": "gear"},
+        {"label": "Riding jacket", "category": "gear"},
+        {"label": "Riding boots", "category": "gear"},
+        {"label": "Gloves", "category": "gear"},
+        {"label": "Rain gear", "category": "gear"},
+        {"label": "Sunglasses", "category": "gear"},
+        {"label": "Earplugs", "category": "gear"},
+        {"label": "Phone mount", "category": "electronics"},
+        {"label": "Phone charger", "category": "electronics"},
+        {"label": "Action camera", "category": "electronics"},
+        {"label": "Wallet & ID", "category": "essentials"},
+        {"label": "Insurance docs", "category": "essentials"},
+        {"label": "Registration", "category": "essentials"},
+        {"label": "Cash", "category": "essentials"},
+        {"label": "First aid kit", "category": "essentials"},
+        {"label": "Water bottle", "category": "essentials"},
+        {"label": "Snacks", "category": "essentials"},
+        {"label": "Tire pressure check", "category": "bike_prep"},
+        {"label": "Oil level check", "category": "bike_prep"},
+        {"label": "Chain lube", "category": "bike_prep"},
+        {"label": "Lights working", "category": "bike_prep"},
+        {"label": "Tool kit", "category": "bike_prep"}
+      ]
+    },
+    {
+      "name": "Camping Trip",
+      "items": [
+        {"label": "Helmet", "category": "gear"},
+        {"label": "Riding jacket", "category": "gear"},
+        {"label": "Riding boots", "category": "gear"},
+        {"label": "Gloves", "category": "gear"},
+        {"label": "Rain gear", "category": "gear"},
+        {"label": "Tent", "category": "camping"},
+        {"label": "Sleeping bag", "category": "camping"},
+        {"label": "Sleeping pad", "category": "camping"},
+        {"label": "Camp stove", "category": "camping"},
+        {"label": "Fuel canister", "category": "camping"},
+        {"label": "Cookware", "category": "camping"},
+        {"label": "Lighter / matches", "category": "camping"},
+        {"label": "Headlamp", "category": "camping"},
+        {"label": "Camp chair", "category": "camping"},
+        {"label": "Cooler / dry bag", "category": "camping"},
+        {"label": "Phone mount", "category": "electronics"},
+        {"label": "Phone charger", "category": "electronics"},
+        {"label": "Power bank", "category": "electronics"},
+        {"label": "Action camera", "category": "electronics"},
+        {"label": "Wallet & ID", "category": "essentials"},
+        {"label": "Insurance docs", "category": "essentials"},
+        {"label": "Registration", "category": "essentials"},
+        {"label": "Cash", "category": "essentials"},
+        {"label": "First aid kit", "category": "essentials"},
+        {"label": "Sunscreen", "category": "essentials"},
+        {"label": "Bug spray", "category": "essentials"},
+        {"label": "Tire pressure check", "category": "bike_prep"},
+        {"label": "Oil level check", "category": "bike_prep"},
+        {"label": "Chain lube", "category": "bike_prep"},
+        {"label": "Lights working", "category": "bike_prep"},
+        {"label": "Tool kit", "category": "bike_prep"},
+        {"label": "Tie-down straps", "category": "bike_prep"},
+        {"label": "Saddlebags secured", "category": "bike_prep"}
+      ]
+    },
+    {
+      "name": "Day Ride",
+      "items": [
+        {"label": "Helmet", "category": "gear"},
+        {"label": "Riding jacket", "category": "gear"},
+        {"label": "Gloves", "category": "gear"},
+        {"label": "Sunglasses", "category": "gear"},
+        {"label": "Phone mount", "category": "electronics"},
+        {"label": "Phone charger", "category": "electronics"},
+        {"label": "Wallet & ID", "category": "essentials"},
+        {"label": "Water bottle", "category": "essentials"},
+        {"label": "Tire pressure check", "category": "bike_prep"},
+        {"label": "Lights working", "category": "bike_prep"}
+      ]
+    }
+  ]
+}

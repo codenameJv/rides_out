@@ -1,0 +1,55 @@
+name: rides_out
+description: "Motorcycle Ride & Camping Planner"
+publish_to: 'none'
+version: 1.0.0+1
+
+environment:
+  sdk: ^3.11.0
+
+dependencies:
+  flutter:
+    sdk: flutter
+
+  cupertino_icons: ^1.0.8
+
+  # State Management
+  flutter_riverpod: ^2.6.1
+
+  # Database (offline-first)
+  hive: ^2.2.3
+  hive_flutter: ^1.1.0
+
+  # Maps
+  flutter_map: ^7.0.2
+  latlong2: ^0.9.1
+  flutter_map_cache: ^2.1.0
+  http_cache_file_store: ^2.0.1
+
+  # Routing
+  go_router: ^15.1.2
+
+  # UI
+  flutter_animate: ^4.5.2
+  google_fonts: ^6.2.1
+
+  # Location
+  geolocator: ^13.0.4
+  flutter_map_location_marker: ^9.0.0
+
+  # Utilities
+  uuid: ^4.5.1
+  intl: ^0.20.2
+  url_launcher: ^6.3.1
+  path_provider: ^2.1.5
+  collection: ^1.19.1
+
+dev_dependencies:
+  flutter_test:
+    sdk: flutter
+  flutter_lints: ^6.0.0
+
+flutter:
+  uses-material-design: true
+
+  assets:
+    - assets/
