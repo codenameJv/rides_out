@@ -7,6 +7,7 @@ import '../../core/theme/app_dimensions.dart';
 import '../../core/services/data_export_service.dart';
 import '../../core/services/hive_service.dart';
 import '../../core/services/tile_cache_service.dart';
+import '../../shared/providers/settings_provider.dart';
 import '../../shared/widgets/confirm_dialog.dart';
 import '../trips/providers/trips_provider.dart';
 
@@ -29,6 +30,7 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
   @override
   Widget build(BuildContext context) {
     final trips = ref.watch(tripsProvider);
+    final settings = ref.watch(settingsProvider);
 
     return Scaffold(
       backgroundColor: AppColors.background,
@@ -36,6 +38,23 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
       body: ListView(
         children: [
           const SizedBox(height: AppDimensions.paddingSM),
+
+          // Routing
+          _SectionTitle('Routing'),
+          SwitchListTile(
+            secondary: const Icon(Icons.block, color: AppColors.textSecondary),
+            title: const Text('Avoid expressways & tolls'),
+            subtitle: const Text(
+                'Exclude toll roads and expressways from route planning'),
+            value: settings.avoidTollsExpressways,
+            activeTrackColor: AppColors.primary,
+            onChanged: (value) {
+              ref
+                  .read(settingsProvider.notifier)
+                  .setAvoidTollsExpressways(value);
+            },
+          ),
+          const Divider(),
 
           // App info
           _SectionTitle('About'),

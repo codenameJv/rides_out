@@ -3,6 +3,8 @@ import 'dart:io';
 
 import 'package:latlong2/latlong.dart';
 
+import 'hive_service.dart';
+
 class OsrmRoute {
   final List<LatLng> points;
   final double distanceMeters;
@@ -21,16 +23,24 @@ class OsrmService {
   static const _baseUrl = 'router.project-osrm.org';
   static const _userAgent = 'RidesOut/1.0';
 
-  // In-memory cache keyed by rounded coords (4 decimal places)
+  // In-memory cache keyed by rounded coords (4 decimal places) + exclude flag
   static final Map<String, List<LatLng>> _cache = {};
   static final Map<String, List<OsrmRoute>> _altCache = {};
+
+  static bool get _avoidTollsExpressways =>
+      HiveService.settingsBox
+          .get('avoid_tolls_expressways', defaultValue: false) as bool;
+
+  static String? get _excludeParam =>
+      _avoidTollsExpressways ? 'motorway,toll' : null;
 
   static String _cacheKey(LatLng from, LatLng to) {
     final fLat = from.latitude.toStringAsFixed(4);
     final fLng = from.longitude.toStringAsFixed(4);
     final tLat = to.latitude.toStringAsFixed(4);
     final tLng = to.longitude.toStringAsFixed(4);
-    return '$fLat,$fLng;$tLat,$tLng';
+    final suffix = _avoidTollsExpressways ? ':noMW' : '';
+    return '$fLat,$fLng;$tLat,$tLng$suffix';
   }
 
   /// Fetches road geometry between two points from OSRM.
@@ -42,10 +52,13 @@ class OsrmService {
 
     final coords =
         '${from.longitude},${from.latitude};${to.longitude},${to.latitude}';
-    final uri = Uri.https(_baseUrl, '/route/v1/driving/$coords', {
+    final params = <String, String>{
       'overview': 'full',
       'geometries': 'geojson',
-    });
+    };
+    final exclude = _excludeParam;
+    if (exclude != null) params['exclude'] = exclude;
+    final uri = Uri.https(_baseUrl, '/route/v1/driving/$coords', params);
 
     try {
       final client = HttpClient();
@@ -85,11 +98,14 @@ class OsrmService {
 
     final coords =
         '${from.longitude},${from.latitude};${to.longitude},${to.latitude}';
-    final uri = Uri.https(_baseUrl, '/route/v1/driving/$coords', {
+    final params = <String, String>{
       'overview': 'full',
       'geometries': 'geojson',
       'alternatives': '3',
-    });
+    };
+    final exclude = _excludeParam;
+    if (exclude != null) params['exclude'] = exclude;
+    final uri = Uri.https(_baseUrl, '/route/v1/driving/$coords', params);
 
     try {
       final client = HttpClient();
