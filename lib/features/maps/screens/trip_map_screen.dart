@@ -9,6 +9,7 @@ import '../../../core/services/nominatim_service.dart';
 import '../../../core/theme/app_colors.dart';
 import '../../../core/theme/app_text_styles.dart';
 import '../../../core/utils/distance_calculator.dart';
+import '../../../core/utils/route_segment_utils.dart';
 import '../../../core/theme/app_dimensions.dart';
 import '../../../local_db/models/enums.dart';
 import '../../../local_db/models/geo_point_model.dart';
@@ -252,26 +253,36 @@ class _TripMapScreenState extends ConsumerState<TripMapScreen> {
                   child: Row(
                     children: [
                       if (trip != null && trip.hasRecordedRoute)
-                        Container(
-                          margin: const EdgeInsets.only(
-                              right: AppDimensions.paddingSM),
-                          padding: const EdgeInsets.symmetric(
-                            horizontal: AppDimensions.paddingSM,
-                            vertical: 2,
-                          ),
-                          decoration: BoxDecoration(
-                            color: AppColors.primary.withValues(alpha: 0.15),
-                            borderRadius: BorderRadius.circular(
-                                AppDimensions.radiusSM),
-                          ),
-                          child: Text(
-                            'Recorded route',
-                            style: AppTextStyles.bodySmall.copyWith(
-                              color: AppColors.primary,
-                              fontWeight: FontWeight.w600,
+                        Builder(builder: (context) {
+                          final segCount =
+                              RouteSegmentUtils.splitIntoSegments(
+                                      trip.recordedRoute)
+                                  .length;
+                          final label = segCount > 1
+                              ? 'Recorded $segCount segments'
+                              : 'Recorded route';
+                          return Container(
+                            margin: const EdgeInsets.only(
+                                right: AppDimensions.paddingSM),
+                            padding: const EdgeInsets.symmetric(
+                              horizontal: AppDimensions.paddingSM,
+                              vertical: 2,
                             ),
-                          ),
-                        )
+                            decoration: BoxDecoration(
+                              color:
+                                  AppColors.primary.withValues(alpha: 0.15),
+                              borderRadius: BorderRadius.circular(
+                                  AppDimensions.radiusSM),
+                            ),
+                            child: Text(
+                              label,
+                              style: AppTextStyles.bodySmall.copyWith(
+                                color: AppColors.primary,
+                                fontWeight: FontWeight.w600,
+                              ),
+                            ),
+                          );
+                        })
                       else if (totalDist > 0)
                         Container(
                           margin: const EdgeInsets.only(

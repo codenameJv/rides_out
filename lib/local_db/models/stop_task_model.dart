@@ -12,6 +12,18 @@ class StopTaskModel {
     this.isChecked = false,
   });
 
+  Map<String, dynamic> toJson() => {
+        'id': id,
+        'label': label,
+        'isChecked': isChecked,
+      };
+
+  factory StopTaskModel.fromJson(Map<String, dynamic> json) => StopTaskModel(
+        id: json['id'] as String,
+        label: json['label'] as String,
+        isChecked: json['isChecked'] as bool? ?? false,
+      );
+
   StopTaskModel copyWith({
     String? id,
     String? label,

@@ -6,6 +6,8 @@ import '../../../core/theme/app_text_styles.dart';
 import '../../../core/theme/app_dimensions.dart';
 import '../../../core/utils/date_formatter.dart';
 import '../../../core/utils/currency_formatter.dart';
+import '../../../core/utils/distance_calculator.dart';
+import '../../../core/utils/route_segment_utils.dart';
 import '../../../shared/widgets/confirm_dialog.dart';
 import '../../../local_db/models/enums.dart';
 import '../../../local_db/models/trip_model.dart';
@@ -258,37 +260,152 @@ class _OverviewTab extends ConsumerWidget {
           ],
         ),
 
-        // Start Ride button
+        // Ride buttons
         if (trip.status == TripStatus.planning ||
             trip.status == TripStatus.upcoming ||
             trip.status == TripStatus.active) ...[
           const SizedBox(height: AppDimensions.paddingMD),
-          SizedBox(
-            width: double.infinity,
-            child: FilledButton.icon(
-              onPressed: () =>
-                  context.push('/trip/${trip.id}/ride'),
-              icon: Icon(trip.hasRecordedRoute
-                  ? Icons.replay
-                  : Icons.two_wheeler),
-              label: Text(trip.hasRecordedRoute
-                  ? 'Ride Again'
-                  : 'Start Ride'),
-            ),
-          ),
-          if (trip.hasRecordedRoute)
-            Padding(
-              padding:
-                  const EdgeInsets.only(top: AppDimensions.paddingXS),
-              child: Text(
-                'This will replace the existing recorded route.',
-                style: AppTextStyles.bodySmall.copyWith(
-                  color: AppColors.textHint,
-                ),
-                textAlign: TextAlign.center,
+          if (trip.hasRecordedRoute) ...[
+            // Segment summary card
+            _SegmentSummaryCard(trip: trip),
+            const SizedBox(height: AppDimensions.paddingSM),
+            // Continue Ride (append mode)
+            SizedBox(
+              width: double.infinity,
+              child: FilledButton.icon(
+                onPressed: () =>
+                    context.push('/trip/${trip.id}/ride?append=true'),
+                icon: const Icon(Icons.add_road),
+                label: const Text('Continue Ride'),
               ),
             ),
+            const SizedBox(height: AppDimensions.paddingSM),
+            // Re-record from Scratch
+            SizedBox(
+              width: double.infinity,
+              child: OutlinedButton.icon(
+                onPressed: () async {
+                  final confirmed = await ConfirmDialog.show(
+                    context,
+                    title: 'Re-record from Scratch',
+                    message:
+                        'This will replace all existing recorded segments. Are you sure?',
+                    confirmLabel: 'Replace',
+                  );
+                  if (confirmed && context.mounted) {
+                    context.push('/trip/${trip.id}/ride');
+                  }
+                },
+                icon: const Icon(Icons.replay),
+                label: const Text('Re-record from Scratch'),
+              ),
+            ),
+          ] else ...[
+            // No recorded route — simple Start Ride
+            SizedBox(
+              width: double.infinity,
+              child: FilledButton.icon(
+                onPressed: () =>
+                    context.push('/trip/${trip.id}/ride'),
+                icon: const Icon(Icons.two_wheeler),
+                label: const Text('Start Ride'),
+              ),
+            ),
+          ],
         ],
+      ],
+    );
+  }
+}
+
+class _SegmentSummaryCard extends StatelessWidget {
+  final TripModel trip;
+
+  const _SegmentSummaryCard({required this.trip});
+
+  String _formatDuration(Duration d) {
+    final hours = d.inHours;
+    final minutes = d.inMinutes.remainder(60);
+    if (hours > 0) return '${hours}h ${minutes}m';
+    return '${minutes}m';
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final segments =
+        RouteSegmentUtils.splitIntoSegments(trip.recordedRoute);
+    final total = RouteSegmentUtils.totalStats(segments);
+
+    return Card(
+      child: Padding(
+        padding: const EdgeInsets.all(AppDimensions.paddingMD),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Row(
+              children: [
+                const Icon(Icons.route, size: 18, color: AppColors.primary),
+                const SizedBox(width: 8),
+                Text(
+                  '${total.segmentCount} ${total.segmentCount == 1 ? 'segment' : 'segments'} · ${DistanceCalculator.formatDistance(total.distanceKm)}',
+                  style: AppTextStyles.titleMedium,
+                ),
+              ],
+            ),
+            const SizedBox(height: 8),
+            for (int i = 0; i < segments.length; i++) ...[
+              _SegmentRow(
+                index: i,
+                stats: RouteSegmentUtils.segmentStats(segments[i]),
+                formatDuration: _formatDuration,
+              ),
+              if (i < segments.length - 1)
+                const SizedBox(height: 4),
+            ],
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+class _SegmentRow extends StatelessWidget {
+  final int index;
+  final ({double distanceKm, Duration duration}) stats;
+  final String Function(Duration) formatDuration;
+
+  const _SegmentRow({
+    required this.index,
+    required this.stats,
+    required this.formatDuration,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    final color =
+        AppColors.segmentColors[index % AppColors.segmentColors.length];
+    return Row(
+      children: [
+        Container(
+          width: 10,
+          height: 10,
+          decoration: BoxDecoration(
+            color: color,
+            shape: BoxShape.circle,
+          ),
+        ),
+        const SizedBox(width: 8),
+        Text(
+          'Segment ${index + 1}',
+          style: AppTextStyles.bodySmall,
+        ),
+        const Spacer(),
+        Text(
+          '${DistanceCalculator.formatDistance(stats.distanceKm)} · ${formatDuration(stats.duration)}',
+          style: AppTextStyles.bodySmall.copyWith(
+            color: AppColors.textSecondary,
+          ),
+        ),
       ],
     );
   }

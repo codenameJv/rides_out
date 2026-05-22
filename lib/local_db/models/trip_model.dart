@@ -44,6 +44,54 @@ class TripModel extends HiveObject {
 
   bool get hasRecordedRoute => recordedRoute.isNotEmpty;
 
+  Map<String, dynamic> toJson() => {
+        'id': id,
+        'name': name,
+        'description': description,
+        'status': status.name,
+        'startDate': startDate.toIso8601String(),
+        'endDate': endDate.toIso8601String(),
+        'budget': budget,
+        'stops': stops.map((s) => s.toJson()).toList(),
+        'checklist': checklist.map((c) => c.toJson()).toList(),
+        'expenses': expenses.map((e) => e.toJson()).toList(),
+        'createdAt': createdAt.toIso8601String(),
+        'updatedAt': updatedAt.toIso8601String(),
+        'recordedRoute': recordedRoute.map((r) => r.toJson()).toList(),
+      };
+
+  factory TripModel.fromJson(Map<String, dynamic> json) => TripModel(
+        id: json['id'] as String,
+        name: json['name'] as String,
+        description: json['description'] as String?,
+        status: TripStatus.values.byName(json['status'] as String),
+        startDate: DateTime.parse(json['startDate'] as String),
+        endDate: DateTime.parse(json['endDate'] as String),
+        budget: (json['budget'] as num).toDouble(),
+        stops: (json['stops'] as List<dynamic>?)
+                ?.map((s) =>
+                    ItineraryStopModel.fromJson(s as Map<String, dynamic>))
+                .toList() ??
+            [],
+        checklist: (json['checklist'] as List<dynamic>?)
+                ?.map((c) =>
+                    ChecklistItemModel.fromJson(c as Map<String, dynamic>))
+                .toList() ??
+            [],
+        expenses: (json['expenses'] as List<dynamic>?)
+                ?.map(
+                    (e) => ExpenseModel.fromJson(e as Map<String, dynamic>))
+                .toList() ??
+            [],
+        createdAt: DateTime.parse(json['createdAt'] as String),
+        updatedAt: DateTime.parse(json['updatedAt'] as String),
+        recordedRoute: (json['recordedRoute'] as List<dynamic>?)
+                ?.map((r) =>
+                    RoutePointModel.fromJson(r as Map<String, dynamic>))
+                .toList() ??
+            [],
+      );
+
   TripModel copyWith({
     String? id,
     String? name,

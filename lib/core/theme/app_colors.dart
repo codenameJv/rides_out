@@ -36,6 +36,18 @@ class AppColors {
   static const Color entertainment = Color(0xFFEC407A);
   static const Color other = Color(0xFF9E9E9E);
 
+  // Segment colors for multi-segment route rendering
+  static const List<Color> segmentColors = [
+    Color(0xFFFF8C00), // orange (primary)
+    Color(0xFF42A5F5), // blue
+    Color(0xFF66BB6A), // green
+    Color(0xFFAB47BC), // purple
+    Color(0xFFEF5350), // red
+    Color(0xFFFFCA28), // yellow
+    Color(0xFF26C6DA), // cyan
+    Color(0xFFEC407A), // pink
+  ];
+
   // Stop type colors
   static const Color stopStart = Color(0xFF4CAF50);
   static const Color stopFuel = Color(0xFFFF7043);

@@ -15,15 +15,22 @@ import '../../../core/theme/app_dimensions.dart';
 import '../../../core/theme/app_text_styles.dart';
 import '../../../core/utils/distance_calculator.dart';
 import '../../../local_db/models/enums.dart';
+import '../../../core/utils/route_segment_utils.dart';
 import '../../../shared/widgets/confirm_dialog.dart';
 import '../../itinerary/providers/itinerary_provider.dart';
+import '../../trips/providers/trips_provider.dart';
 import '../providers/ride_tracking_provider.dart';
 import '../widgets/stop_marker.dart';
 
 class RideTrackingScreen extends ConsumerStatefulWidget {
   final String tripId;
+  final bool appendMode;
 
-  const RideTrackingScreen({super.key, required this.tripId});
+  const RideTrackingScreen({
+    super.key,
+    required this.tripId,
+    this.appendMode = false,
+  });
 
   @override
   ConsumerState<RideTrackingScreen> createState() => _RideTrackingScreenState();
@@ -39,14 +46,29 @@ class _RideTrackingScreenState extends ConsumerState<RideTrackingScreen> {
   List<LatLng> _guideRoute = [];
   // Per-leg info: midpoint + distance label
   List<({LatLng midpoint, String label})> _legLabels = [];
+  // Existing segments from previous recording sessions (append mode)
+  List<List<LatLng>> _existingSegments = [];
 
   @override
   void initState() {
     super.initState();
     WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (widget.appendMode) _loadExistingSegments();
       _startTracking();
       _loadGuideRoute();
     });
+  }
+
+  void _loadExistingSegments() {
+    final trip = ref.read(tripByIdProvider(widget.tripId));
+    if (trip == null || !trip.hasRecordedRoute) return;
+
+    final segments =
+        RouteSegmentUtils.splitIntoSegments(trip.recordedRoute);
+    _existingSegments = segments
+        .map((seg) =>
+            seg.map((p) => LatLng(p.latitude, p.longitude)).toList())
+        .toList();
   }
 
   Future<void> _loadGuideRoute() async {
@@ -89,7 +111,10 @@ class _RideTrackingScreenState extends ConsumerState<RideTrackingScreen> {
 
   Future<void> _startTracking() async {
     final notifier = ref.read(rideTrackingProvider.notifier);
-    final success = await notifier.startTracking(widget.tripId);
+    final success = await notifier.startTracking(
+      widget.tripId,
+      appendMode: widget.appendMode,
+    );
 
     if (!mounted) return;
 
@@ -110,8 +135,9 @@ class _RideTrackingScreenState extends ConsumerState<RideTrackingScreen> {
     final confirmed = await ConfirmDialog.show(
       context,
       title: 'Stop Ride',
-      message:
-          'Stop recording and save this route to your trip?',
+      message: widget.appendMode
+          ? 'Stop recording and add this segment to your trip?'
+          : 'Stop recording and save this route to your trip?',
       confirmLabel: 'Stop & Save',
       confirmColor: AppColors.primary,
     );
@@ -215,6 +241,22 @@ class _RideTrackingScreenState extends ConsumerState<RideTrackingScreen> {
                 userAgentPackageName: 'com.ridesout.app',
                 tileProvider: TileCacheService.tileProvider,
               ),
+              // Existing segments from previous sessions (append mode)
+              if (_existingSegments.isNotEmpty)
+                PolylineLayer(
+                  polylines: [
+                    for (int i = 0; i < _existingSegments.length; i++)
+                      if (_existingSegments[i].length >= 2)
+                        Polyline(
+                          points: _existingSegments[i],
+                          strokeWidth: 4,
+                          color: AppColors
+                              .segmentColors[
+                                  i % AppColors.segmentColors.length]
+                              .withValues(alpha: 0.35),
+                        ),
+                  ],
+                ),
               // Planned route guide (faded)
               if (_guideRoute.length >= 2)
                 PolylineLayer(

@@ -9,6 +9,7 @@ import '../../../core/services/tile_cache_service.dart';
 import '../../../core/theme/app_colors.dart';
 import '../../../core/theme/app_dimensions.dart';
 import '../../../core/utils/distance_calculator.dart';
+import '../../../core/utils/route_segment_utils.dart';
 import '../../../local_db/models/enums.dart';
 import '../../../local_db/models/itinerary_stop_model.dart';
 import '../../../local_db/models/route_point_model.dart';
@@ -153,8 +154,26 @@ class _TripMapViewState extends State<TripMapView> {
       }
     }
 
-    // Selected / recorded route (bright)
-    if (primaryPolyline.length >= 2) {
+    if (_hasRecordedRoute) {
+      // Multi-segment rendering with distinct colors
+      final segments =
+          RouteSegmentUtils.splitIntoSegments(widget.recordedRoute!);
+      for (int i = 0; i < segments.length; i++) {
+        final segPts = segments[i]
+            .map((p) => LatLng(p.latitude, p.longitude))
+            .toList();
+        if (segPts.length >= 2) {
+          final color = AppColors
+              .segmentColors[i % AppColors.segmentColors.length];
+          polylines.add(Polyline(
+            points: segPts,
+            strokeWidth: AppDimensions.mapLineWidth,
+            color: color.withValues(alpha: 0.8),
+          ));
+        }
+      }
+    } else if (primaryPolyline.length >= 2) {
+      // Selected estimated route (bright)
       polylines.add(Polyline(
         points: primaryPolyline,
         strokeWidth: AppDimensions.mapLineWidth,

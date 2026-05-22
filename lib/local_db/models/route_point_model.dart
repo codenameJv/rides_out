@@ -12,6 +12,19 @@ class RoutePointModel {
     required this.timestamp,
   });
 
+  Map<String, dynamic> toJson() => {
+        'latitude': latitude,
+        'longitude': longitude,
+        'timestamp': timestamp.toIso8601String(),
+      };
+
+  factory RoutePointModel.fromJson(Map<String, dynamic> json) =>
+      RoutePointModel(
+        latitude: (json['latitude'] as num).toDouble(),
+        longitude: (json['longitude'] as num).toDouble(),
+        timestamp: DateTime.parse(json['timestamp'] as String),
+      );
+
   RoutePointModel copyWith({
     double? latitude,
     double? longitude,

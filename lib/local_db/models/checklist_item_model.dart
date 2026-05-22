@@ -15,6 +15,21 @@ class ChecklistItemModel {
     this.isChecked = false,
   });
 
+  Map<String, dynamic> toJson() => {
+        'id': id,
+        'label': label,
+        'category': category.name,
+        'isChecked': isChecked,
+      };
+
+  factory ChecklistItemModel.fromJson(Map<String, dynamic> json) =>
+      ChecklistItemModel(
+        id: json['id'] as String,
+        label: json['label'] as String,
+        category: ChecklistCategory.values.byName(json['category'] as String),
+        isChecked: json['isChecked'] as bool? ?? false,
+      );
+
   ChecklistItemModel copyWith({
     String? id,
     String? label,

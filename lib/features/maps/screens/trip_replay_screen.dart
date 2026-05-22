@@ -11,6 +11,7 @@ import '../../../core/theme/app_colors.dart';
 import '../../../core/theme/app_dimensions.dart';
 import '../../../core/theme/app_text_styles.dart';
 import '../../../core/utils/distance_calculator.dart';
+import '../../../core/utils/route_segment_utils.dart';
 import '../../../local_db/models/itinerary_stop_model.dart';
 import '../../../local_db/models/route_point_model.dart';
 import '../../itinerary/providers/itinerary_provider.dart';
@@ -96,12 +97,14 @@ class _TripReplayScreenState extends ConsumerState<TripReplayScreen>
     List<List<LatLng>> legs;
 
     if (recordedRoute.length >= 2) {
-      // Use recorded route as a single leg
-      final recordedLatLngs = recordedRoute
-          .map((p) => LatLng(p.latitude, p.longitude))
+      // Split recorded route into segments by timestamp gaps
+      final segments =
+          RouteSegmentUtils.splitIntoSegments(recordedRoute);
+      legs = segments
+          .map((seg) =>
+              seg.map((p) => LatLng(p.latitude, p.longitude)).toList())
           .toList();
-      _routePoints = recordedLatLngs;
-      legs = [recordedLatLngs];
+      _routePoints = legs.expand((l) => l).toList();
     } else {
       if (_stopsWithLocation.length < 2) {
         if (mounted) setState(() => _isLoadingRoute = false);

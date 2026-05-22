@@ -90,7 +90,12 @@ class AppRouter {
             path: 'ride',
             builder: (context, state) {
               final id = state.pathParameters['id']!;
-              return RideTrackingScreen(tripId: id);
+              final append =
+                  state.uri.queryParameters['append'] == 'true';
+              return RideTrackingScreen(
+                tripId: id,
+                appendMode: append,
+              );
             },
           ),
         ],

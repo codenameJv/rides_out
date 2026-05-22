@@ -7,6 +7,7 @@ import '../../trips/providers/trips_provider.dart';
 class RideTrackingState {
   final bool isTracking;
   final bool isPaused;
+  final bool appendMode;
   final String? tripId;
   final List<RoutePointModel> points;
   final DateTime? startTime;
@@ -16,6 +17,7 @@ class RideTrackingState {
   const RideTrackingState({
     this.isTracking = false,
     this.isPaused = false,
+    this.appendMode = false,
     this.tripId,
     this.points = const [],
     this.startTime,
@@ -26,6 +28,7 @@ class RideTrackingState {
   RideTrackingState copyWith({
     bool? isTracking,
     bool? isPaused,
+    bool? appendMode,
     String? tripId,
     List<RoutePointModel>? points,
     DateTime? startTime,
@@ -35,6 +38,7 @@ class RideTrackingState {
     return RideTrackingState(
       isTracking: isTracking ?? this.isTracking,
       isPaused: isPaused ?? this.isPaused,
+      appendMode: appendMode ?? this.appendMode,
       tripId: tripId ?? this.tripId,
       points: points ?? this.points,
       startTime: startTime ?? this.startTime,
@@ -50,12 +54,13 @@ class RideTrackingNotifier extends StateNotifier<RideTrackingState> {
 
   final _service = RideTrackingService.instance;
 
-  Future<bool> startTracking(String tripId) async {
+  Future<bool> startTracking(String tripId, {bool appendMode = false}) async {
     final hasPermission = await _service.ensurePermission();
     if (!hasPermission) return false;
 
     state = RideTrackingState(
       isTracking: true,
+      appendMode: appendMode,
       tripId: tripId,
       startTime: DateTime.now(),
     );
@@ -112,12 +117,16 @@ class RideTrackingNotifier extends StateNotifier<RideTrackingState> {
   Future<void> stopAndSave() async {
     final points = _service.stop();
     final tripId = state.tripId;
+    final append = state.appendMode;
 
     if (tripId != null && points.isNotEmpty) {
       final notifier = _ref.read(tripsProvider.notifier);
       final trip = notifier.getTrip(tripId);
       if (trip != null) {
-        final updated = trip.copyWith(recordedRoute: points);
+        final route = append
+            ? [...trip.recordedRoute, ...points]
+            : points;
+        final updated = trip.copyWith(recordedRoute: route);
         await notifier.updateTrip(updated);
       }
     }

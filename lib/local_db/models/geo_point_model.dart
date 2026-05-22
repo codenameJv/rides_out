@@ -26,6 +26,16 @@ class GeoPointModel {
 
   @override
   int get hashCode => latitude.hashCode ^ longitude.hashCode;
+
+  Map<String, dynamic> toJson() => {
+        'latitude': latitude,
+        'longitude': longitude,
+      };
+
+  factory GeoPointModel.fromJson(Map<String, dynamic> json) => GeoPointModel(
+        latitude: (json['latitude'] as num).toDouble(),
+        longitude: (json['longitude'] as num).toDouble(),
+      );
 }
 
 class GeoPointModelAdapter extends TypeAdapter<GeoPointModel> {

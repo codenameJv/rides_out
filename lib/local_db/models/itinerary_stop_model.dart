@@ -27,6 +27,39 @@ class ItineraryStopModel {
     this.isDone = false,
   });
 
+  Map<String, dynamic> toJson() => {
+        'id': id,
+        'name': name,
+        'description': description,
+        'type': type.name,
+        'location': location?.toJson(),
+        'arrivalTime': arrivalTime?.toIso8601String(),
+        'order': order,
+        'tasks': tasks.map((t) => t.toJson()).toList(),
+        'isDone': isDone,
+      };
+
+  factory ItineraryStopModel.fromJson(Map<String, dynamic> json) =>
+      ItineraryStopModel(
+        id: json['id'] as String,
+        name: json['name'] as String,
+        description: json['description'] as String?,
+        type: StopType.values.byName(json['type'] as String),
+        location: json['location'] != null
+            ? GeoPointModel.fromJson(json['location'] as Map<String, dynamic>)
+            : null,
+        arrivalTime: json['arrivalTime'] != null
+            ? DateTime.parse(json['arrivalTime'] as String)
+            : null,
+        order: json['order'] as int,
+        tasks: (json['tasks'] as List<dynamic>?)
+                ?.map((t) =>
+                    StopTaskModel.fromJson(t as Map<String, dynamic>))
+                .toList() ??
+            [],
+        isDone: json['isDone'] as bool? ?? false,
+      );
+
   ItineraryStopModel copyWith({
     String? id,
     String? name,

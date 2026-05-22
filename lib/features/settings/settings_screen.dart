@@ -4,6 +4,7 @@ import '../../core/constants/app_constants.dart';
 import '../../core/theme/app_colors.dart';
 import '../../core/theme/app_text_styles.dart';
 import '../../core/theme/app_dimensions.dart';
+import '../../core/services/data_export_service.dart';
 import '../../core/services/hive_service.dart';
 import '../../core/services/tile_cache_service.dart';
 import '../../shared/widgets/confirm_dialog.dart';
@@ -74,6 +75,82 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
                 if (context.mounted) {
                   ScaffoldMessenger.of(context).showSnackBar(
                     const SnackBar(content: Text('All data deleted')),
+                  );
+                }
+              }
+            },
+          ),
+          const Divider(),
+
+          // Backup & Transfer
+          _SectionTitle('Backup & Transfer'),
+          ListTile(
+            leading: const Icon(Icons.upload_file,
+                color: AppColors.textSecondary),
+            title: const Text('Export Data'),
+            subtitle: const Text('Share all trips as a backup file'),
+            onTap: () async {
+              try {
+                await DataExportService.exportData(trips);
+              } catch (e) {
+                if (context.mounted) {
+                  ScaffoldMessenger.of(context).showSnackBar(
+                    SnackBar(content: Text('Export failed: $e')),
+                  );
+                }
+              }
+            },
+          ),
+          ListTile(
+            leading: const Icon(Icons.download,
+                color: AppColors.textSecondary),
+            title: const Text('Import Data'),
+            subtitle: const Text('Restore trips from a backup file'),
+            onTap: () async {
+              try {
+                final imported = await DataExportService.importData();
+                if (imported == null) return;
+                if (!context.mounted) return;
+
+                final existingIds =
+                    trips.map((t) => t.id).toSet();
+                final newTrips = imported
+                    .where((t) => !existingIds.contains(t.id))
+                    .toList();
+
+                if (newTrips.isEmpty) {
+                  ScaffoldMessenger.of(context).showSnackBar(
+                    const SnackBar(
+                        content:
+                            Text('No new trips to import (all already exist)')),
+                  );
+                  return;
+                }
+
+                final confirmed = await ConfirmDialog.show(
+                  context,
+                  title: 'Import Trips',
+                  message:
+                      'Add ${newTrips.length} new trip${newTrips.length == 1 ? '' : 's'} to your data? Existing trips will not be modified.',
+                  confirmLabel: 'Import',
+                );
+                if (!confirmed) return;
+
+                for (final trip in newTrips) {
+                  await HiveService.tripsBox.put(trip.id, trip);
+                }
+                ref.invalidate(tripsProvider);
+                if (context.mounted) {
+                  ScaffoldMessenger.of(context).showSnackBar(
+                    SnackBar(
+                        content: Text(
+                            '${newTrips.length} trip${newTrips.length == 1 ? '' : 's'} imported')),
+                  );
+                }
+              } catch (e) {
+                if (context.mounted) {
+                  ScaffoldMessenger.of(context).showSnackBar(
+                    SnackBar(content: Text('Import failed: $e')),
                   );
                 }
               }

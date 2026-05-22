@@ -17,6 +17,22 @@ class ExpenseModel {
     required this.date,
   });
 
+  Map<String, dynamic> toJson() => {
+        'id': id,
+        'description': description,
+        'amount': amount,
+        'category': category.name,
+        'date': date.toIso8601String(),
+      };
+
+  factory ExpenseModel.fromJson(Map<String, dynamic> json) => ExpenseModel(
+        id: json['id'] as String,
+        description: json['description'] as String,
+        amount: (json['amount'] as num).toDouble(),
+        category: ExpenseCategory.values.byName(json['category'] as String),
+        date: DateTime.parse(json['date'] as String),
+      );
+
   ExpenseModel copyWith({
     String? id,
     String? description,
