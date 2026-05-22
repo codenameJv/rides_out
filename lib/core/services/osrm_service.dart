@@ -86,6 +86,11 @@ class OsrmService {
     if (wantExclude) {
       data = await _fetch(
           _buildUri(coords, baseParams, withExclude: true));
+      // Clear if server returned Ok but no usable routes
+      if (data != null &&
+          ((data['routes'] as List<dynamic>?) ?? []).isEmpty) {
+        data = null;
+      }
     }
     data ??= await _fetch(_buildUri(coords, baseParams));
 
@@ -132,6 +137,11 @@ class OsrmService {
     if (wantExclude) {
       data = await _fetch(
           _buildUri(coords, baseParams, withExclude: true));
+      // Clear if server returned Ok but no usable routes
+      if (data != null &&
+          ((data['routes'] as List<dynamic>?) ?? []).isEmpty) {
+        data = null;
+      }
     }
     data ??= await _fetch(_buildUri(coords, baseParams));
 
