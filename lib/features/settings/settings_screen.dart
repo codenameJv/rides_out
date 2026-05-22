@@ -45,7 +45,8 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
             secondary: const Icon(Icons.block, color: AppColors.textSecondary),
             title: const Text('Avoid expressways & tolls'),
             subtitle: const Text(
-                'Exclude toll roads and expressways from route planning'),
+                'Exclude toll roads and expressways from route planning. '
+                'Falls back to normal routing if the server does not support this.'),
             value: settings.avoidTollsExpressways,
             activeTrackColor: AppColors.primary,
             onChanged: (value) {

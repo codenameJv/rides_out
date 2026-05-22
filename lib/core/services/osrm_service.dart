@@ -31,131 +31,138 @@ class OsrmService {
       HiveService.settingsBox
           .get('avoid_tolls_expressways', defaultValue: false) as bool;
 
-  static String? get _excludeParam =>
-      _avoidTollsExpressways ? 'motorway,toll' : null;
-
-  static String _cacheKey(LatLng from, LatLng to) {
+  static String _cacheKey(LatLng from, LatLng to, {bool withExclude = false}) {
     final fLat = from.latitude.toStringAsFixed(4);
     final fLng = from.longitude.toStringAsFixed(4);
     final tLat = to.latitude.toStringAsFixed(4);
     final tLng = to.longitude.toStringAsFixed(4);
-    final suffix = _avoidTollsExpressways ? ':noMW' : '';
+    final suffix = withExclude ? ':noMW' : '';
     return '$fLat,$fLng;$tLat,$tLng$suffix';
+  }
+
+  /// Raw HTTP fetch that returns decoded JSON or null on failure.
+  static Future<Map<String, dynamic>?> _fetch(Uri uri) async {
+    try {
+      final client = HttpClient();
+      final request = await client.getUrl(uri);
+      request.headers.set('User-Agent', _userAgent);
+      final response = await request.close();
+      final body = await response.transform(utf8.decoder).join();
+      client.close();
+
+      final data = json.decode(body) as Map<String, dynamic>;
+      if (data['code'] != 'Ok') return null;
+      return data;
+    } catch (_) {
+      return null;
+    }
+  }
+
+  /// Build OSRM URI, optionally with exclude=motorway,toll.
+  static Uri _buildUri(
+    String coords,
+    Map<String, String> baseParams, {
+    bool withExclude = false,
+  }) {
+    final params = Map<String, String>.from(baseParams);
+    if (withExclude) params['exclude'] = 'motorway,toll';
+    return Uri.https(_baseUrl, '/route/v1/driving/$coords', params);
   }
 
   /// Fetches road geometry between two points from OSRM.
   /// Returns a list of [LatLng] representing the road route.
   /// Falls back to a straight line on any error.
   static Future<List<LatLng>> getRoute(LatLng from, LatLng to) async {
-    final key = _cacheKey(from, to);
+    final wantExclude = _avoidTollsExpressways;
+    final key = _cacheKey(from, to, withExclude: wantExclude);
     if (_cache.containsKey(key)) return _cache[key]!;
 
     final coords =
         '${from.longitude},${from.latitude};${to.longitude},${to.latitude}';
-    final params = <String, String>{
-      'overview': 'full',
-      'geometries': 'geojson',
-    };
-    final exclude = _excludeParam;
-    if (exclude != null) params['exclude'] = exclude;
-    final uri = Uri.https(_baseUrl, '/route/v1/driving/$coords', params);
+    const baseParams = {'overview': 'full', 'geometries': 'geojson'};
 
-    try {
-      final client = HttpClient();
-      final request = await client.getUrl(uri);
-      request.headers.set('User-Agent', _userAgent);
-      final response = await request.close();
-      final body = await response.transform(utf8.decoder).join();
-      client.close();
-
-      final data = json.decode(body) as Map<String, dynamic>;
-      final routes = data['routes'] as List<dynamic>;
-      if (routes.isEmpty) return [from, to];
-
-      final geometry = routes[0]['geometry'] as Map<String, dynamic>;
-      final coordinates = geometry['coordinates'] as List<dynamic>;
-
-      final points = coordinates.map((coord) {
-        final c = coord as List<dynamic>;
-        // GeoJSON is [lng, lat]
-        return LatLng((c[1] as num).toDouble(), (c[0] as num).toDouble());
-      }).toList();
-
-      if (points.length < 2) return [from, to];
-
-      _cache[key] = points;
-      return points;
-    } catch (_) {
-      return [from, to];
+    // Try with exclude first if requested, fall back without it
+    Map<String, dynamic>? data;
+    if (wantExclude) {
+      data = await _fetch(
+          _buildUri(coords, baseParams, withExclude: true));
     }
+    data ??= await _fetch(_buildUri(coords, baseParams));
+
+    if (data == null) return [from, to];
+
+    final routes = data['routes'] as List<dynamic>;
+    if (routes.isEmpty) return [from, to];
+
+    final geometry = routes[0]['geometry'] as Map<String, dynamic>;
+    final coordinates = geometry['coordinates'] as List<dynamic>;
+
+    final points = coordinates.map((coord) {
+      final c = coord as List<dynamic>;
+      return LatLng((c[1] as num).toDouble(), (c[0] as num).toDouble());
+    }).toList();
+
+    if (points.length < 2) return [from, to];
+
+    _cache[key] = points;
+    return points;
   }
 
   /// Fetches up to 3 route alternatives between two points.
   static Future<List<OsrmRoute>> getRouteAlternatives(
       LatLng from, LatLng to) async {
-    final key = _cacheKey(from, to);
+    final wantExclude = _avoidTollsExpressways;
+    final key = _cacheKey(from, to, withExclude: wantExclude);
     if (_altCache.containsKey(key)) return _altCache[key]!;
 
     final coords =
         '${from.longitude},${from.latitude};${to.longitude},${to.latitude}';
-    final params = <String, String>{
+    const baseParams = {
       'overview': 'full',
       'geometries': 'geojson',
       'alternatives': '3',
     };
-    final exclude = _excludeParam;
-    if (exclude != null) params['exclude'] = exclude;
-    final uri = Uri.https(_baseUrl, '/route/v1/driving/$coords', params);
 
-    try {
-      final client = HttpClient();
-      final request = await client.getUrl(uri);
-      request.headers.set('User-Agent', _userAgent);
-      final response = await request.close();
-      final body = await response.transform(utf8.decoder).join();
-      client.close();
+    final fallback = [
+      OsrmRoute(points: [from, to], distanceMeters: 0, durationSeconds: 0)
+    ];
 
-      final data = json.decode(body) as Map<String, dynamic>;
-      final routes = data['routes'] as List<dynamic>;
-      if (routes.isEmpty) {
-        return [
-          OsrmRoute(points: [from, to], distanceMeters: 0, durationSeconds: 0)
-        ];
-      }
-
-      final result = <OsrmRoute>[];
-      for (final route in routes) {
-        final geometry = route['geometry'] as Map<String, dynamic>;
-        final coordinates = geometry['coordinates'] as List<dynamic>;
-        final points = coordinates.map((coord) {
-          final c = coord as List<dynamic>;
-          return LatLng((c[1] as num).toDouble(), (c[0] as num).toDouble());
-        }).toList();
-
-        if (points.length < 2) continue;
-
-        result.add(OsrmRoute(
-          points: points,
-          distanceMeters: (route['distance'] as num).toDouble(),
-          durationSeconds: (route['duration'] as num).toDouble(),
-        ));
-      }
-
-      if (result.isEmpty) {
-        return [
-          OsrmRoute(points: [from, to], distanceMeters: 0, durationSeconds: 0)
-        ];
-      }
-
-      // Also cache the first route in the regular cache
-      _cache[key] = result.first.points;
-      _altCache[key] = result;
-      return result;
-    } catch (_) {
-      return [
-        OsrmRoute(points: [from, to], distanceMeters: 0, durationSeconds: 0)
-      ];
+    // Try with exclude first if requested, fall back without it
+    Map<String, dynamic>? data;
+    if (wantExclude) {
+      data = await _fetch(
+          _buildUri(coords, baseParams, withExclude: true));
     }
+    data ??= await _fetch(_buildUri(coords, baseParams));
+
+    if (data == null) return fallback;
+
+    final routes = data['routes'] as List<dynamic>;
+    if (routes.isEmpty) return fallback;
+
+    final result = <OsrmRoute>[];
+    for (final route in routes) {
+      final geometry = route['geometry'] as Map<String, dynamic>;
+      final coordinates = geometry['coordinates'] as List<dynamic>;
+      final points = coordinates.map((coord) {
+        final c = coord as List<dynamic>;
+        return LatLng((c[1] as num).toDouble(), (c[0] as num).toDouble());
+      }).toList();
+
+      if (points.length < 2) continue;
+
+      result.add(OsrmRoute(
+        points: points,
+        distanceMeters: (route['distance'] as num).toDouble(),
+        durationSeconds: (route['duration'] as num).toDouble(),
+      ));
+    }
+
+    if (result.isEmpty) return fallback;
+
+    _cache[key] = result.first.points;
+    _altCache[key] = result;
+    return result;
   }
 
   /// Fetches road routes for each consecutive pair of stops.
