@@ -2,6 +2,7 @@ import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_map/flutter_map.dart';
 import 'package:flutter_map_location_marker/flutter_map_location_marker.dart';
+import 'package:geolocator/geolocator.dart';
 import 'package:latlong2/latlong.dart' hide DistanceCalculator;
 import '../../../core/constants/app_constants.dart';
 import '../../../core/services/osrm_service.dart';
@@ -34,6 +35,7 @@ class TripMapView extends StatefulWidget {
 }
 
 class _TripMapViewState extends State<TripMapView> {
+  final MapController _mapController = MapController();
   List<OsrmRoute>? _routeAlternatives;
   int _selectedRouteIndex = 0;
   List<({LatLng midpoint, String label})> _legLabels = [];
@@ -58,6 +60,28 @@ class _TripMapViewState extends State<TripMapView> {
   void initState() {
     super.initState();
     if (!_hasRecordedRoute) _fetchRoutes();
+    _centerOnUserLocation();
+  }
+
+  Future<void> _centerOnUserLocation() async {
+    try {
+      final pos = await Geolocator.getCurrentPosition(
+        locationSettings: const LocationSettings(
+          accuracy: LocationAccuracy.medium,
+          timeLimit: Duration(seconds: 5),
+        ),
+      );
+      if (!mounted) return;
+      _mapController.move(LatLng(pos.latitude, pos.longitude), 13);
+    } catch (_) {
+      // Permission denied or timeout — keep default center
+    }
+  }
+
+  @override
+  void dispose() {
+    _mapController.dispose();
+    super.dispose();
   }
 
   @override
@@ -184,6 +208,7 @@ class _TripMapViewState extends State<TripMapView> {
     return Stack(
       children: [
         FlutterMap(
+          mapController: _mapController,
           options: MapOptions(
             initialCenter: center,
             initialZoom: zoom,
