@@ -220,11 +220,13 @@ class _StopFormScreenState extends ConsumerState<StopFormScreen> {
             const SizedBox(height: AppDimensions.paddingMD),
             InkWell(
               onTap: () async {
+                final stops = ref.read(itineraryProvider(widget.tripId));
                 final result = await Navigator.push<GeoPointModel>(
                   context,
                   MaterialPageRoute(
                     builder: (_) => LocationPickerScreen(
                       initialLocation: _selectedLocation,
+                      existingStops: stops,
                     ),
                   ),
                 );

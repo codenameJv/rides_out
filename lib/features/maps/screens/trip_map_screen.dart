@@ -154,9 +154,12 @@ class _TripMapScreenState extends ConsumerState<TripMapScreen> {
   }
 
   Future<void> _searchAndAddWaypoint() async {
+    final stops = ref.read(itineraryProvider(widget.tripId));
     final result = await Navigator.push<GeoPointModel>(
       context,
-      MaterialPageRoute(builder: (_) => const LocationPickerScreen()),
+      MaterialPageRoute(
+        builder: (_) => LocationPickerScreen(existingStops: stops),
+      ),
     );
     if (result != null && mounted) {
       await _addWaypoint(LatLng(result.latitude, result.longitude));

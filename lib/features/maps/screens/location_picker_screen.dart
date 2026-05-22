@@ -10,12 +10,20 @@ import '../../../core/services/tile_cache_service.dart';
 import '../../../core/services/nominatim_service.dart';
 import '../../../core/theme/app_colors.dart';
 import '../../../core/theme/app_dimensions.dart';
+import '../../../local_db/models/enums.dart';
 import '../../../local_db/models/geo_point_model.dart';
+import '../../../local_db/models/itinerary_stop_model.dart';
+import '../widgets/stop_marker.dart';
 
 class LocationPickerScreen extends StatefulWidget {
   final GeoPointModel? initialLocation;
+  final List<ItineraryStopModel> existingStops;
 
-  const LocationPickerScreen({super.key, this.initialLocation});
+  const LocationPickerScreen({
+    super.key,
+    this.initialLocation,
+    this.existingStops = const [],
+  });
 
   @override
   State<LocationPickerScreen> createState() => _LocationPickerScreenState();
@@ -169,6 +177,28 @@ class _LocationPickerScreenState extends State<LocationPickerScreen> {
                 tileProvider: TileCacheService.tileProvider,
               ),
               CurrentLocationLayer(),
+              // Existing stops from the itinerary
+              if (widget.existingStops.isNotEmpty)
+                MarkerLayer(
+                  markers: widget.existingStops
+                      .where((s) => s.location != null)
+                      .map((stop) {
+                    final isWaypoint = stop.type == StopType.waypoint;
+                    final size = isWaypoint
+                        ? AppDimensions.mapWaypointMarkerSize
+                        : AppDimensions.mapMarkerSize;
+                    return Marker(
+                      point: LatLng(
+                        stop.location!.latitude,
+                        stop.location!.longitude,
+                      ),
+                      width: size,
+                      height: isWaypoint ? size : size + 8,
+                      child: StopMarkerWidget(stop: stop),
+                    );
+                  }).toList(),
+                ),
+              // Selected pin
               if (_selectedPoint != null)
                 MarkerLayer(
                   markers: [

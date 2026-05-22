@@ -23,7 +23,10 @@ class TimelineWidget extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return ListView.builder(
-      padding: const EdgeInsets.symmetric(vertical: AppDimensions.paddingSM),
+      padding: const EdgeInsets.only(
+        top: AppDimensions.paddingSM,
+        bottom: 80,
+      ),
       itemCount: stops.length,
       itemBuilder: (context, index) {
         final stop = stops[index];
