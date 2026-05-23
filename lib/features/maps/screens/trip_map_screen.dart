@@ -6,6 +6,7 @@ import 'package:go_router/go_router.dart';
 import 'package:latlong2/latlong.dart' hide DistanceCalculator;
 import 'package:url_launcher/url_launcher.dart';
 import '../../../core/services/nominatim_service.dart';
+import '../../../core/services/overpass_service.dart';
 import '../../../core/theme/app_colors.dart';
 import '../../../core/theme/app_text_styles.dart';
 import '../../../core/utils/distance_calculator.dart';
@@ -14,8 +15,11 @@ import '../../../core/theme/app_dimensions.dart';
 import '../../../local_db/models/enums.dart';
 import '../../../local_db/models/geo_point_model.dart';
 import '../../itinerary/providers/itinerary_provider.dart';
+import '../../../shared/providers/settings_provider.dart';
 import '../../trips/providers/trips_provider.dart';
 import '../../../shared/widgets/empty_state_widget.dart';
+import '../widgets/poi_detail_sheet.dart';
+import '../widgets/poi_marker.dart';
 import '../widgets/trip_map_view.dart';
 import 'location_picker_screen.dart';
 
@@ -30,9 +34,24 @@ class TripMapScreen extends ConsumerStatefulWidget {
 
 class _TripMapScreenState extends ConsumerState<TripMapScreen> {
   bool _editMode = false;
+  bool _shapeMode = false;
+  bool _poiMode = false;
+  String _poiCategory = 'fuel';
+  List<PoiModel> _pois = [];
+  bool _loadingPois = false;
 
   void _toggleEditMode() {
-    setState(() => _editMode = !_editMode);
+    setState(() {
+      _editMode = !_editMode;
+      if (_editMode) _shapeMode = false;
+    });
+  }
+
+  void _toggleShapeMode() {
+    setState(() {
+      _shapeMode = !_shapeMode;
+      if (_shapeMode) _editMode = false;
+    });
   }
 
   /// Find the best insertion order by locating the nearest route leg.
@@ -77,6 +96,27 @@ class _TripMapScreenState extends ConsumerState<TripMapScreen> {
   }
 
   double _toRad(double deg) => deg * pi / 180;
+
+  Future<void> _addShapePoint(LatLng point) async {
+    final stops = ref.read(itineraryProvider(widget.tripId));
+    final stopPoints = stops
+        .where((s) => s.location != null)
+        .map((s) => LatLng(s.location!.latitude, s.location!.longitude))
+        .toList();
+
+    final insertOrder = _findInsertionOrder(point, stopPoints);
+
+    final actions = ref.read(itineraryActionsProvider(widget.tripId));
+    final location = GeoPointModel(
+      latitude: point.latitude,
+      longitude: point.longitude,
+    );
+
+    await actions.addShapePoint(
+      location: location,
+      atOrder: insertOrder,
+    );
+  }
 
   Future<void> _addWaypoint(LatLng point) async {
     final stops = ref.read(itineraryProvider(widget.tripId));
@@ -124,6 +164,14 @@ class _TripMapScreenState extends ConsumerState<TripMapScreen> {
   }
 
   Future<void> _onStopTapped(dynamic stop) async {
+    // Shape mode: delete shape points immediately (no confirmation)
+    if (_shapeMode && stop.type == StopType.shapePoint) {
+      await ref
+          .read(itineraryActionsProvider(widget.tripId))
+          .deleteStop(stop.id);
+      return;
+    }
+
     if (!_editMode) return;
     if (stop.type != StopType.waypoint) return;
 
@@ -153,6 +201,61 @@ class _TripMapScreenState extends ConsumerState<TripMapScreen> {
     }
   }
 
+  Future<void> _fetchPois(String category) async {
+    final stops = ref.read(itineraryProvider(widget.tripId));
+    final stopPoints = stops
+        .where((s) => s.location != null)
+        .map((s) => LatLng(s.location!.latitude, s.location!.longitude))
+        .toList();
+
+    if (stopPoints.isEmpty) return;
+
+    setState(() => _loadingPois = true);
+
+    // Calculate bounding box from stops with buffer
+    double minLat = 90, maxLat = -90, minLon = 180, maxLon = -180;
+    for (final p in stopPoints) {
+      if (p.latitude < minLat) minLat = p.latitude;
+      if (p.latitude > maxLat) maxLat = p.latitude;
+      if (p.longitude < minLon) minLon = p.longitude;
+      if (p.longitude > maxLon) maxLon = p.longitude;
+    }
+    const buffer = 0.05;
+    minLat -= buffer;
+    maxLat += buffer;
+    minLon -= buffer;
+    maxLon += buffer;
+
+    final pois = await OverpassService.searchPois(
+      south: minLat,
+      west: minLon,
+      north: maxLat,
+      east: maxLon,
+      category: category,
+    );
+
+    if (mounted) {
+      setState(() {
+        _pois = pois;
+        _loadingPois = false;
+      });
+    }
+  }
+
+  void _onPoiTap(PoiModel poi) {
+    showModalBottomSheet(
+      context: context,
+      backgroundColor: Colors.transparent,
+      builder: (_) => PoiDetailSheet(
+        poi: poi,
+        onAddAsStop: () {
+          Navigator.pop(context);
+          _addWaypoint(LatLng(poi.lat, poi.lon));
+        },
+      ),
+    );
+  }
+
   Future<void> _searchAndAddWaypoint() async {
     final stops = ref.read(itineraryProvider(widget.tripId));
     final result = await Navigator.push<GeoPointModel>(
@@ -175,7 +278,9 @@ class _TripMapScreenState extends ConsumerState<TripMapScreen> {
 
     final waypointCount =
         stops.where((s) => s.type == StopType.waypoint).length;
-    final regularStopCount = stopsWithLocation.length - waypointCount;
+    final shapePointCount =
+        stops.where((s) => s.type.isShapeOnly).length;
+    final regularStopCount = stopsWithLocation.length - waypointCount - shapePointCount;
 
     // Calculate total distance
     final points = stopsWithLocation
@@ -193,6 +298,29 @@ class _TripMapScreenState extends ConsumerState<TripMapScreen> {
             tooltip: _editMode ? 'Exit edit mode' : 'Edit waypoints',
             color: _editMode ? AppColors.primary : null,
             onPressed: _toggleEditMode,
+          ),
+          IconButton(
+            icon: Icon(_shapeMode ? Icons.timeline : Icons.timeline_outlined),
+            tooltip: _shapeMode ? 'Exit shape mode' : 'Shape route',
+            color: _shapeMode ? AppColors.primary : null,
+            onPressed: _toggleShapeMode,
+          ),
+          IconButton(
+            icon: Icon(
+              Icons.place,
+              color: _poiMode ? AppColors.primary : null,
+            ),
+            tooltip: _poiMode ? 'Hide POIs' : 'Search POIs',
+            onPressed: () {
+              setState(() {
+                _poiMode = !_poiMode;
+                if (!_poiMode) {
+                  _pois = [];
+                } else {
+                  _fetchPois(_poiCategory);
+                }
+              });
+            },
           ),
           if (stopsWithLocation.length >= 2)
             IconButton(
@@ -223,6 +351,29 @@ class _TripMapScreenState extends ConsumerState<TripMapScreen> {
             )
           : Column(
               children: [
+                if (_shapeMode)
+                  Container(
+                    width: double.infinity,
+                    padding: const EdgeInsets.symmetric(
+                      horizontal: AppDimensions.paddingMD,
+                      vertical: AppDimensions.paddingSM,
+                    ),
+                    color: AppColors.stopShapePoint.withValues(alpha: 0.15),
+                    child: Row(
+                      children: [
+                        Icon(Icons.timeline,
+                            size: 16, color: AppColors.stopShapePoint),
+                        const SizedBox(width: 8),
+                        Text(
+                          'Tap map to shape \u00B7 Tap point to remove',
+                          style: AppTextStyles.bodySmall.copyWith(
+                            color: AppColors.stopShapePoint,
+                            fontWeight: FontWeight.w600,
+                          ),
+                        ),
+                      ],
+                    ),
+                  ),
                 if (_editMode)
                   Container(
                     width: double.infinity,
@@ -310,22 +461,78 @@ class _TripMapScreenState extends ConsumerState<TripMapScreen> {
                         Text(
                           waypointCount > 0
                               ? '$regularStopCount stops + $waypointCount waypoints · ${DistanceCalculator.formatDistance(totalDist)} total'
-                              : '${stopsWithLocation.length} stops · ${DistanceCalculator.formatDistance(totalDist)} total',
+                              : '$regularStopCount stops · ${DistanceCalculator.formatDistance(totalDist)} total',
                           style: AppTextStyles.bodySmall.copyWith(
                               color: AppColors.primary),
                         ),
                     ],
                   ),
                 ),
+                if (_poiMode)
+                  Container(
+                    width: double.infinity,
+                    padding: const EdgeInsets.symmetric(
+                      horizontal: AppDimensions.paddingSM,
+                      vertical: AppDimensions.paddingXS,
+                    ),
+                    color: AppColors.surface,
+                    child: SingleChildScrollView(
+                      scrollDirection: Axis.horizontal,
+                      child: Row(
+                        children: [
+                          for (final cat in OverpassService.categories.keys)
+                            Padding(
+                              padding: const EdgeInsets.only(right: 6),
+                              child: ChoiceChip(
+                                label: Text(cat),
+                                selected: _poiCategory == cat,
+                                onSelected: (_) {
+                                  setState(() => _poiCategory = cat);
+                                  _fetchPois(cat);
+                                },
+                              ),
+                            ),
+                        ],
+                      ),
+                    ),
+                  ),
                 Expanded(
-                  child: TripMapView(
-                    stops: stops,
-                    recordedRoute:
-                        trip != null && trip.hasRecordedRoute
-                            ? trip.recordedRoute
+                  child: Stack(
+                    children: [
+                      TripMapView(
+                        stops: stops,
+                        recordedRoute:
+                            trip != null && trip.hasRecordedRoute
+                                ? trip.recordedRoute
+                                : null,
+                        onMapTap: _editMode
+                            ? _addWaypoint
+                            : _shapeMode
+                                ? _addShapePoint
+                                : null,
+                        onStopTap: (_editMode || _shapeMode)
+                            ? _onStopTapped
                             : null,
-                    onMapTap: _editMode ? _addWaypoint : null,
-                    onStopTap: _editMode ? _onStopTapped : null,
+                        shapeMode: _shapeMode,
+                        showSuggestedRoute: ref.watch(settingsProvider).showSuggestedRoute,
+                        poiMarkers: _pois
+                            .map((poi) => PoiMarkerWidget.toMarker(
+                                  poi,
+                                  onTap: () => _onPoiTap(poi),
+                                ))
+                            .toList(),
+                      ),
+                      if (_loadingPois)
+                        const Positioned(
+                          top: 8,
+                          right: 8,
+                          child: SizedBox(
+                            width: 20,
+                            height: 20,
+                            child: CircularProgressIndicator(strokeWidth: 2),
+                          ),
+                        ),
+                    ],
                   ),
                 ),
               ],

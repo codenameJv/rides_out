@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
+import 'package:go_router/go_router.dart';
 import '../../core/constants/app_constants.dart';
 import '../../core/theme/app_colors.dart';
 import '../../core/theme/app_text_styles.dart';
@@ -54,6 +55,57 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
                   .read(settingsProvider.notifier)
                   .setAvoidTollsExpressways(value);
             },
+          ),
+          SwitchListTile(
+            secondary:
+                const Icon(Icons.route, color: AppColors.textSecondary),
+            title: const Text('Show suggested route'),
+            subtitle: const Text(
+                'Use road-based routing between stops. '
+                'When off, stops are connected with straight lines.'),
+            value: settings.showSuggestedRoute,
+            activeTrackColor: AppColors.primary,
+            onChanged: (value) {
+              ref
+                  .read(settingsProvider.notifier)
+                  .setShowSuggestedRoute(value);
+            },
+          ),
+          SwitchListTile(
+            secondary:
+                const Icon(Icons.straighten, color: AppColors.textSecondary),
+            title: const Text('Use miles'),
+            subtitle: const Text('Show distances in miles instead of kilometers'),
+            value: settings.useMiles,
+            activeTrackColor: AppColors.primary,
+            onChanged: (value) {
+              ref.read(settingsProvider.notifier).setUseMiles(value);
+            },
+          ),
+          ListTile(
+            leading: const Icon(Icons.timer_outlined,
+                color: AppColors.textSecondary),
+            title: const Text('Session gap threshold'),
+            subtitle:
+                const Text('Time gap to split recording into segments'),
+            trailing: DropdownButton<int>(
+              value: settings.sessionGapMinutes,
+              underline: const SizedBox(),
+              items: const [
+                DropdownMenuItem(value: 10, child: Text('10 min')),
+                DropdownMenuItem(value: 15, child: Text('15 min')),
+                DropdownMenuItem(value: 30, child: Text('30 min')),
+                DropdownMenuItem(value: 45, child: Text('45 min')),
+                DropdownMenuItem(value: 60, child: Text('60 min')),
+              ],
+              onChanged: (value) {
+                if (value != null) {
+                  ref
+                      .read(settingsProvider.notifier)
+                      .setSessionGapMinutes(value);
+                }
+              },
+            ),
           ),
           const Divider(),
 
@@ -175,6 +227,18 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
                 }
               }
             },
+          ),
+          const Divider(),
+
+          // Offline Maps
+          _SectionTitle('Offline Maps'),
+          ListTile(
+            leading: const Icon(Icons.download_for_offline,
+                color: AppColors.textSecondary),
+            title: const Text('Manage offline maps'),
+            subtitle: const Text('Download map regions for offline use'),
+            trailing: const Icon(Icons.chevron_right),
+            onTap: () => context.push('/offline-maps'),
           ),
           const Divider(),
 

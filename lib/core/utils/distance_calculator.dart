@@ -1,9 +1,15 @@
 import 'dart:math';
 
+import '../services/hive_service.dart';
+
 class DistanceCalculator {
   DistanceCalculator._();
 
   static const double _earthRadiusKm = 6371.0;
+  static const double _kmToMi = 0.621371;
+
+  static bool get _useMiles =>
+      HiveService.settingsBox.get('use_miles', defaultValue: false) as bool;
 
   /// Haversine formula to calculate distance between two lat/lng points in km
   static double distanceKm(
@@ -27,8 +33,14 @@ class DistanceCalculator {
 
   static double _toRadians(double degrees) => degrees * pi / 180;
 
-  /// Format distance for display
+  /// Format distance for display (respects miles setting)
   static String formatDistance(double km) {
+    if (_useMiles) {
+      final mi = km * _kmToMi;
+      if (mi < 0.1) return '< 0.1 mi';
+      if (mi < 10) return '${mi.toStringAsFixed(1)} mi';
+      return '${mi.round()} mi';
+    }
     if (km < 0.1) return '< 0.1 km';
     if (km < 10) return '${km.toStringAsFixed(1)} km';
     return '${km.round()} km';

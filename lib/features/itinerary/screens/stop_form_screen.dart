@@ -179,7 +179,7 @@ class _StopFormScreenState extends ConsumerState<StopFormScreen> {
               initialValue: _type,
               decoration: const InputDecoration(labelText: 'Stop Type'),
               items: StopType.values
-                  .where((t) => t != StopType.waypoint)
+                  .where((t) => t != StopType.waypoint && t != StopType.shapePoint)
                   .map((t) => DropdownMenuItem(
                         value: t,
                         child: Text('${t.icon}  ${t.label}'),

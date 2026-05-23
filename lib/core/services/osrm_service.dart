@@ -83,6 +83,7 @@ class OsrmService {
 
     // Try with exclude first if requested, fall back without it
     Map<String, dynamic>? data;
+    bool usedExclude = false;
     if (wantExclude) {
       data = await _fetch(
           _buildUri(coords, baseParams, withExclude: true));
@@ -90,6 +91,8 @@ class OsrmService {
       if (data != null &&
           ((data['routes'] as List<dynamic>?) ?? []).isEmpty) {
         data = null;
+      } else if (data != null) {
+        usedExclude = true;
       }
     }
     data ??= await _fetch(_buildUri(coords, baseParams));
@@ -109,7 +112,9 @@ class OsrmService {
 
     if (points.length < 2) return [from, to];
 
-    _cache[key] = points;
+    // Cache with the correct key (use non-exclude key if we fell back)
+    final cacheKey = usedExclude ? key : _cacheKey(from, to);
+    _cache[cacheKey] = points;
     return points;
   }
 
@@ -134,6 +139,7 @@ class OsrmService {
 
     // Try with exclude first if requested, fall back without it
     Map<String, dynamic>? data;
+    bool usedExclude = false;
     if (wantExclude) {
       data = await _fetch(
           _buildUri(coords, baseParams, withExclude: true));
@@ -141,6 +147,8 @@ class OsrmService {
       if (data != null &&
           ((data['routes'] as List<dynamic>?) ?? []).isEmpty) {
         data = null;
+      } else if (data != null) {
+        usedExclude = true;
       }
     }
     data ??= await _fetch(_buildUri(coords, baseParams));
@@ -170,8 +178,10 @@ class OsrmService {
 
     if (result.isEmpty) return fallback;
 
-    _cache[key] = result.first.points;
-    _altCache[key] = result;
+    // Cache with the correct key (use non-exclude key if we fell back)
+    final cacheKey = usedExclude ? key : _cacheKey(from, to);
+    _cache[cacheKey] = result.first.points;
+    _altCache[cacheKey] = result;
     return result;
   }
 

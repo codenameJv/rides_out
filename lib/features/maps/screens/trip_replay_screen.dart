@@ -16,8 +16,11 @@ import '../../../local_db/models/itinerary_stop_model.dart';
 import '../../../local_db/models/route_point_model.dart';
 import '../../itinerary/providers/itinerary_provider.dart';
 import '../../trips/providers/trips_provider.dart';
+import '../widgets/compass_button.dart';
 import '../widgets/replay_controls.dart';
+import '../widgets/speed_legend.dart';
 import '../widgets/stop_marker.dart';
+import '../widgets/zoom_buttons.dart';
 
 class _RouteSegment {
   final List<LatLng> points;
@@ -53,14 +56,25 @@ class _TripReplayScreenState extends ConsumerState<TripReplayScreen>
   List<LatLng> _routePoints = [];
   List<_RouteSegment> _segments = [];
   List<ItineraryStopModel> _stopsWithLocation = [];
-  double _speed = 1.0;
+  double _speed = 0.5;
   int _currentStopIndex = 0;
   bool _showStopCard = true;
   bool _isLoadingRoute = true;
   Timer? _stopCardTimer;
+  double _mapRotation = 0.0;
+  StreamSubscription? _mapEventSub;
+  bool _showSpeedViz = false;
+  List<double> _speeds = [];
+  bool _hasTimestamps = false;
 
   // Per-segment distances in km (segment i = stop i → stop i+1)
   List<double> _segmentDistances = [];
+
+  // Cached per-frame values (updated in _onAnimationTick, read in build)
+  List<LatLng> _cachedDrawnPoints = [];
+  LatLng? _cachedRiderPos;
+  // Cached speed polylines (computed once at setup, not per frame)
+  List<Polyline> _cachedSpeedPolylines = [];
 
   // Smooth zoom state
   double _currentZoom = 15.0;
@@ -74,6 +88,12 @@ class _TripReplayScreenState extends ConsumerState<TripReplayScreen>
     _animationController.addListener(_onAnimationTick);
     _animationController.addStatusListener(_onAnimationStatus);
 
+    _mapEventSub = _mapController.mapEventStream.listen((event) {
+      if (event is MapEventRotate || event is MapEventRotateEnd) {
+        setState(() => _mapRotation = _mapController.camera.rotation * 3.14159265 / 180.0);
+      }
+    });
+
     // Pulse animation for rider marker glow
     _pulseController = AnimationController(
       vsync: this,
@@ -86,9 +106,14 @@ class _TripReplayScreenState extends ConsumerState<TripReplayScreen>
     });
   }
 
+  // All stops with location (including shape points) for routing
+  List<ItineraryStopModel> _allStopsWithLocation = [];
+
   Future<void> _setupRoute() async {
     final stops = ref.read(itineraryProvider(widget.tripId));
-    _stopsWithLocation = stops.where((s) => s.location != null).toList();
+    _allStopsWithLocation = stops.where((s) => s.location != null).toList();
+    // Display-only stops exclude shape points
+    _stopsWithLocation = _allStopsWithLocation.where((s) => !s.type.isShapeOnly).toList();
 
     // Check if the trip has a recorded GPS route
     final trip = ref.read(tripByIdProvider(widget.tripId));
@@ -105,21 +130,47 @@ class _TripReplayScreenState extends ConsumerState<TripReplayScreen>
               seg.map((p) => LatLng(p.latitude, p.longitude)).toList())
           .toList();
       _routePoints = legs.expand((l) => l).toList();
+      _hasTimestamps = true;
+      _speeds = RouteSegmentUtils.calculateSpeeds(recordedRoute);
     } else {
-      if (_stopsWithLocation.length < 2) {
+      if (_allStopsWithLocation.length < 2) {
         if (mounted) setState(() => _isLoadingRoute = false);
         return;
       }
 
-      final stopPoints = _stopsWithLocation
+      // Route through ALL stops (including shape points) for accurate geometry
+      final allStopPoints = _allStopsWithLocation
           .map((s) => LatLng(s.location!.latitude, s.location!.longitude))
           .toList();
 
-      // Fetch road routes from OSRM
-      legs = await OsrmService.getRouteLegs(stopPoints);
+      // Fetch road routes
+      final subLegs = await OsrmService.getRouteLegs(allStopPoints);
       if (!mounted) return;
 
-      _routePoints = OsrmService.flattenLegs(legs);
+      _routePoints = OsrmService.flattenLegs(subLegs);
+
+      // Merge sub-legs between real stops into visual legs
+      legs = [];
+      List<LatLng> currentMerged = [];
+      for (int i = 0; i < subLegs.length; i++) {
+        if (currentMerged.isEmpty) {
+          currentMerged = List.from(subLegs[i]);
+        } else {
+          // Deduplicate junction point
+          final startIdx = (subLegs[i].isNotEmpty && subLegs[i].first == currentMerged.last) ? 1 : 0;
+          currentMerged.addAll(subLegs[i].sublist(startIdx));
+        }
+        // If the destination of this sub-leg is a real stop, close the visual leg
+        final destIdx = i + 1;
+        if (destIdx < _allStopsWithLocation.length && !_allStopsWithLocation[destIdx].type.isShapeOnly) {
+          legs.add(currentMerged);
+          currentMerged = [];
+        }
+      }
+      // Flush any remaining points
+      if (currentMerged.isNotEmpty) {
+        legs.add(currentMerged);
+      }
     }
 
     // Build segments with per-point cumulative distances
@@ -175,6 +226,11 @@ class _TripReplayScreenState extends ConsumerState<TripReplayScreen>
 
     _animationController.duration = _calcDuration();
 
+    // Pre-compute speed polylines (full route, doesn't change during animation)
+    if (_speeds.isNotEmpty && _routePoints.length >= 2) {
+      _cachedSpeedPolylines = _buildSpeedPolylines(_routePoints, _speeds);
+    }
+
     setState(() {
       _isLoadingRoute = false;
       _currentStopIndex = 0;
@@ -187,8 +243,8 @@ class _TripReplayScreenState extends ConsumerState<TripReplayScreen>
     for (final seg in _segments) {
       totalDist += seg.cumulativeDistances.last;
     }
-    // ~4s per km, clamped 20-90s
-    final totalSeconds = (totalDist * 4.0).clamp(20.0, 90.0);
+    // ~10s per km, clamped 30-300s for a comfortable pace
+    final totalSeconds = (totalDist * 10.0).clamp(30.0, 300.0);
     return Duration(milliseconds: (totalSeconds * 1000 / _speed).round());
   }
 
@@ -276,6 +332,14 @@ class _TripReplayScreenState extends ConsumerState<TripReplayScreen>
     // Interpolate position along road points
     final pos = _interpolateAlongSegment(currentSegment, segT);
 
+    // Cache drawn points + rider position (avoid recomputing in build)
+    _cachedDrawnPoints = _drawnRoutePoints();
+    _cachedRiderPos = _cachedDrawnPoints.isNotEmpty
+        ? _cachedDrawnPoints.last
+        : _routePoints.isNotEmpty
+            ? _routePoints.first
+            : pos;
+
     // Smooth zoom — gently ease toward stop zoom when arriving
     double targetZoom = _cruiseZoom;
     if (segT > 0.85) {
@@ -297,7 +361,7 @@ class _TripReplayScreenState extends ConsumerState<TripReplayScreen>
         _showStopCard = true;
       });
       _stopCardTimer?.cancel();
-      _stopCardTimer = Timer(const Duration(seconds: 3), () {
+      _stopCardTimer = Timer(const Duration(seconds: 5), () {
         if (mounted && _animationController.isAnimating) {
           setState(() => _showStopCard = false);
         }
@@ -350,12 +414,12 @@ class _TripReplayScreenState extends ConsumerState<TripReplayScreen>
 
   void _cycleSpeed() {
     setState(() {
-      if (_speed == 1.0) {
-        _speed = 2.0;
-      } else if (_speed == 2.0) {
-        _speed = 4.0;
-      } else {
+      if (_speed == 0.5) {
         _speed = 1.0;
+      } else if (_speed == 1.0) {
+        _speed = 2.0;
+      } else {
+        _speed = 0.5;
       }
     });
 
@@ -413,19 +477,25 @@ class _TripReplayScreenState extends ConsumerState<TripReplayScreen>
     return points;
   }
 
-  LatLng _currentPosition() {
-    if (_segments.isEmpty) {
-      return _routePoints.isNotEmpty
-          ? _routePoints.first
-          : LatLng(AppConstants.defaultLat, AppConstants.defaultLng);
+  List<Polyline> _buildSpeedPolylines(
+      List<LatLng> points, List<double> speeds) {
+    if (points.length < 2) return [];
+    final polylines = <Polyline>[];
+    for (int i = 0; i < points.length - 1; i++) {
+      final speed = i < speeds.length ? speeds[i] : 0.0;
+      polylines.add(Polyline(
+        points: [points[i], points[i + 1]],
+        strokeWidth: 4,
+        color: RouteSegmentUtils.speedColor(speed),
+      ));
     }
-    final drawn = _drawnRoutePoints();
-    return drawn.isNotEmpty ? drawn.last : _routePoints.first;
+    return polylines;
   }
 
   @override
   void dispose() {
     _stopCardTimer?.cancel();
+    _mapEventSub?.cancel();
     _animationController.removeListener(_onAnimationTick);
     _animationController.removeStatusListener(_onAnimationStatus);
     _pulseController.dispose();
@@ -438,7 +508,8 @@ class _TripReplayScreenState extends ConsumerState<TripReplayScreen>
   Widget build(BuildContext context) {
     final stops = ref.watch(itineraryProvider(widget.tripId));
     final trip = ref.watch(tripByIdProvider(widget.tripId));
-    final stopsWithLocation = stops.where((s) => s.location != null).toList();
+    // Exclude shape points from display
+    final stopsWithLocation = stops.where((s) => s.location != null && !s.type.isShapeOnly).toList();
     final hasRecorded = trip != null && trip.hasRecordedRoute;
 
     if (stopsWithLocation.length < 2 && !hasRecorded) {
@@ -536,8 +607,12 @@ class _TripReplayScreenState extends ConsumerState<TripReplayScreen>
           AnimatedBuilder(
             animation: _animationController,
             builder: (context, _) {
-              final drawnPoints = _drawnRoutePoints();
-              final riderPos = _currentPosition();
+              // Use cached values from _onAnimationTick (no recomputation)
+              final drawnPoints = _cachedDrawnPoints;
+              final riderPos = _cachedRiderPos ??
+                  (_routePoints.isNotEmpty
+                      ? _routePoints.first
+                      : LatLng(AppConstants.defaultLat, AppConstants.defaultLng));
 
               return FlutterMap(
                 mapController: _mapController,
@@ -545,7 +620,9 @@ class _TripReplayScreenState extends ConsumerState<TripReplayScreen>
                   initialCenter: center,
                   initialZoom: _cruiseZoom,
                   interactionOptions: const InteractionOptions(
-                    flags: InteractiveFlag.pinchZoom | InteractiveFlag.drag,
+                    flags: InteractiveFlag.pinchZoom |
+                        InteractiveFlag.drag |
+                        InteractiveFlag.rotate,
                   ),
                 ),
                 children: [
@@ -554,8 +631,12 @@ class _TripReplayScreenState extends ConsumerState<TripReplayScreen>
                     userAgentPackageName: 'com.ridesout.app',
                     tileProvider: TileCacheService.tileProvider,
                   ),
-                  // Faded full route preview
-                  if (_routePoints.length >= 2)
+                  // Full route preview (speed-colored or faded)
+                  if (_routePoints.length >= 2 && _showSpeedViz && _cachedSpeedPolylines.isNotEmpty)
+                    PolylineLayer(
+                      polylines: _cachedSpeedPolylines,
+                    )
+                  else if (_routePoints.length >= 2)
                     PolylineLayer(
                       polylines: [
                         Polyline(
@@ -566,7 +647,7 @@ class _TripReplayScreenState extends ConsumerState<TripReplayScreen>
                       ],
                     ),
                   // Drawn route glow
-                  if (drawnPoints.length >= 2)
+                  if (drawnPoints.length >= 2 && !_showSpeedViz)
                     PolylineLayer(
                       polylines: [
                         Polyline(
@@ -577,7 +658,7 @@ class _TripReplayScreenState extends ConsumerState<TripReplayScreen>
                       ],
                     ),
                   // Drawn route solid
-                  if (drawnPoints.length >= 2)
+                  if (drawnPoints.length >= 2 && !_showSpeedViz)
                     PolylineLayer(
                       polylines: [
                         Polyline(
@@ -734,6 +815,66 @@ class _TripReplayScreenState extends ConsumerState<TripReplayScreen>
                   : const SizedBox.shrink(),
             ),
           ),
+
+          // Speed viz toggle + Compass
+          Positioned(
+            top: MediaQuery.of(context).padding.top + 56,
+            right: AppDimensions.paddingMD,
+            child: Column(
+              children: [
+                CompassButton(
+                  mapController: _mapController,
+                  rotation: _mapRotation,
+                ),
+                const SizedBox(height: 8),
+                ZoomButtons(
+                  onZoomIn: () {
+                    _currentZoom = (_currentZoom + 1).clamp(3.0, 18.0);
+                    _mapController.move(
+                        _mapController.camera.center, _currentZoom);
+                  },
+                  onZoomOut: () {
+                    _currentZoom = (_currentZoom - 1).clamp(3.0, 18.0);
+                    _mapController.move(
+                        _mapController.camera.center, _currentZoom);
+                  },
+                ),
+                if (_hasTimestamps) ...[
+                  const SizedBox(height: 8),
+                  GestureDetector(
+                    onTap: () => setState(() => _showSpeedViz = !_showSpeedViz),
+                    child: Container(
+                      width: 40,
+                      height: 40,
+                      decoration: BoxDecoration(
+                        color: _showSpeedViz
+                            ? AppColors.primary
+                            : AppColors.surface.withValues(alpha: 0.9),
+                        shape: BoxShape.circle,
+                        border: Border.all(
+                          color: AppColors.textHint.withValues(alpha: 0.3),
+                        ),
+                      ),
+                      child: Icon(
+                        Icons.speed,
+                        size: 20,
+                        color: _showSpeedViz
+                            ? Colors.white
+                            : AppColors.textPrimary,
+                      ),
+                    ),
+                  ),
+                ],
+              ],
+            ),
+          ),
+          // Speed legend
+          if (_showSpeedViz)
+            Positioned(
+              top: MediaQuery.of(context).padding.top + 56,
+              left: AppDimensions.paddingMD,
+              child: const SpeedLegend(),
+            ),
 
           // Replay controls at bottom
           Positioned(

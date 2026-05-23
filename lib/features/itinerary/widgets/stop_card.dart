@@ -30,7 +30,7 @@ class StopCard extends StatelessWidget {
   Widget build(BuildContext context) {
     final color = AppColors.stopTypeColor(stop.type.name);
 
-    if (stop.type == StopType.waypoint) {
+    if (stop.type == StopType.waypoint || stop.type == StopType.shapePoint) {
       return Card(
         margin: const EdgeInsets.only(
           left: AppDimensions.paddingXL + 8,

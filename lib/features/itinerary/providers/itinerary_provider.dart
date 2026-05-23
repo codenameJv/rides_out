@@ -78,22 +78,57 @@ class ItineraryActions {
     await notifier.updateTrip(updatedTrip);
   }
 
-  Future<void> reorderStops(int oldIndex, int newIndex) async {
+  /// Reorder a stop by its ID to a new position among the visible (non-shape-point) stops.
+  /// Shape points keep their relative positions between real stops.
+  Future<void> reorderStopById(String stopId, int newVisibleIndex) async {
     final notifier = _ref.read(tripsProvider.notifier);
     final trip = notifier.getTrip(_tripId);
     if (trip == null) return;
 
-    final stops = List<ItineraryStopModel>.from(trip.stops)
+    final allSorted = List<ItineraryStopModel>.from(trip.stops)
       ..sort((a, b) => a.order.compareTo(b.order));
 
-    if (newIndex > oldIndex) newIndex--;
-    final item = stops.removeAt(oldIndex);
-    stops.insert(newIndex, item);
+    // Separate visible stops from shape points
+    final visible = allSorted.where((s) => !s.type.isShapeOnly).toList();
+    final shapePoints = allSorted.where((s) => s.type.isShapeOnly).toList();
 
-    for (int i = 0; i < stops.length; i++) {
-      stops[i] = stops[i].copyWith(order: i);
+    // Reorder within visible list
+    final oldVisIdx = visible.indexWhere((s) => s.id == stopId);
+    if (oldVisIdx == -1) return;
+    final item = visible.removeAt(oldVisIdx);
+    visible.insert(newVisibleIndex.clamp(0, visible.length), item);
+
+    // Map each shape point to the visible stop it follows in the original order
+    final shapeAfter = <String, List<ItineraryStopModel>>{};
+    const beforeFirst = '__before_first__';
+    for (final sp in shapePoints) {
+      // Find the last visible stop before this shape point in original order
+      String afterId = beforeFirst;
+      for (final vs in allSorted) {
+        if (vs.order >= sp.order) break;
+        if (!vs.type.isShapeOnly) afterId = vs.id;
+      }
+      shapeAfter.putIfAbsent(afterId, () => []).add(sp);
     }
-    final updatedTrip = trip.copyWith(stops: stops);
+
+    // Rebuild: start with shape points before the first visible stop
+    final result = <ItineraryStopModel>[];
+    if (shapeAfter.containsKey(beforeFirst)) {
+      result.addAll(shapeAfter[beforeFirst]!);
+    }
+    for (final stop in visible) {
+      result.add(stop);
+      if (shapeAfter.containsKey(stop.id)) {
+        result.addAll(shapeAfter[stop.id]!);
+      }
+    }
+
+    // Reassign orders
+    for (int i = 0; i < result.length; i++) {
+      result[i] = result[i].copyWith(order: i);
+    }
+
+    final updatedTrip = trip.copyWith(stops: result);
     await notifier.updateTrip(updatedTrip);
   }
 
@@ -122,6 +157,34 @@ class ItineraryActions {
     );
 
     updatedStops.add(waypoint);
+    final updatedTrip = trip.copyWith(stops: updatedStops);
+    await notifier.updateTrip(updatedTrip);
+  }
+
+  Future<void> addShapePoint({
+    required GeoPointModel location,
+    required int atOrder,
+  }) async {
+    final notifier = _ref.read(tripsProvider.notifier);
+    final trip = notifier.getTrip(_tripId);
+    if (trip == null) return;
+
+    final updatedStops = List<ItineraryStopModel>.from(trip.stops);
+    for (int i = 0; i < updatedStops.length; i++) {
+      if (updatedStops[i].order >= atOrder) {
+        updatedStops[i] = updatedStops[i].copyWith(order: updatedStops[i].order + 1);
+      }
+    }
+
+    final shapePoint = ItineraryStopModel(
+      id: IdGenerator.generate(),
+      name: 'Shape Point',
+      type: StopType.shapePoint,
+      location: location,
+      order: atOrder,
+    );
+
+    updatedStops.add(shapePoint);
     final updatedTrip = trip.copyWith(stops: updatedStops);
     await notifier.updateTrip(updatedTrip);
   }

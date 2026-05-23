@@ -9,6 +9,8 @@ import '../../features/expenses/screens/expense_form_screen.dart';
 import '../../features/maps/screens/trip_map_screen.dart';
 import '../../features/maps/screens/ride_tracking_screen.dart';
 import '../../features/maps/screens/trip_replay_screen.dart';
+import '../../features/maps/screens/offline_map_screen.dart';
+import '../../features/maps/screens/region_picker_screen.dart';
 import '../../features/statistics/screens/statistics_screen.dart';
 import '../../features/settings/settings_screen.dart';
 
@@ -107,6 +109,16 @@ class AppRouter {
       GoRoute(
         path: '/settings',
         builder: (context, state) => const SettingsScreen(),
+      ),
+      GoRoute(
+        path: '/offline-maps',
+        builder: (context, state) => const OfflineMapScreen(),
+        routes: [
+          GoRoute(
+            path: 'download',
+            builder: (context, state) => const RegionPickerScreen(),
+          ),
+        ],
       ),
     ],
     errorBuilder: (context, state) => Scaffold(

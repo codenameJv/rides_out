@@ -29,14 +29,14 @@ class TimelineConnector extends StatelessWidget {
               color: AppColors.surfaceHighlight,
             ),
           Container(
-            width: type == StopType.waypoint ? 8 : 12,
-            height: type == StopType.waypoint ? 8 : 12,
+            width: (type == StopType.waypoint || type == StopType.shapePoint) ? 8 : 12,
+            height: (type == StopType.waypoint || type == StopType.shapePoint) ? 8 : 12,
             decoration: BoxDecoration(
               color: color,
               shape: BoxShape.circle,
               border: Border.all(
                 color: color.withValues(alpha: 0.3),
-                width: type == StopType.waypoint ? 2 : 3,
+                width: (type == StopType.waypoint || type == StopType.shapePoint) ? 2 : 3,
               ),
             ),
           ),

@@ -1,7 +1,10 @@
+import 'dart:async';
+
 import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_map/flutter_map.dart';
 import 'package:flutter_map_location_marker/flutter_map_location_marker.dart';
+import 'package:flutter_map_marker_cluster/flutter_map_marker_cluster.dart';
 import 'package:geolocator/geolocator.dart';
 import 'package:latlong2/latlong.dart' hide DistanceCalculator;
 import '../../../core/constants/app_constants.dart';
@@ -14,13 +17,18 @@ import '../../../core/utils/route_segment_utils.dart';
 import '../../../local_db/models/enums.dart';
 import '../../../local_db/models/itinerary_stop_model.dart';
 import '../../../local_db/models/route_point_model.dart';
+import 'compass_button.dart';
 import 'stop_marker.dart';
+import 'zoom_buttons.dart';
 
 class TripMapView extends StatefulWidget {
   final List<ItineraryStopModel> stops;
   final void Function(ItineraryStopModel stop)? onStopTap;
   final List<RoutePointModel>? recordedRoute;
   final void Function(LatLng point)? onMapTap;
+  final List<Marker>? poiMarkers;
+  final bool shapeMode;
+  final bool showSuggestedRoute;
 
   const TripMapView({
     super.key,
@@ -28,6 +36,9 @@ class TripMapView extends StatefulWidget {
     this.onStopTap,
     this.recordedRoute,
     this.onMapTap,
+    this.poiMarkers,
+    this.shapeMode = false,
+    this.showSuggestedRoute = true,
   });
 
   @override
@@ -36,9 +47,26 @@ class TripMapView extends StatefulWidget {
 
 class _TripMapViewState extends State<TripMapView> {
   final MapController _mapController = MapController();
-  List<OsrmRoute>? _routeAlternatives;
-  int _selectedRouteIndex = 0;
+  // Per-leg alternatives from OSRM (one list of OsrmRoute per sub-leg)
+  List<List<OsrmRoute>> _legAlternatives = [];
+  // Selected alternative index per sub-leg (default 0 = primary)
+  List<int> _selectedLegIndices = [];
+  // Which visual leg is actively showing alternative chips (null = none)
+  int? _activeVisualLeg;
+  // Polyline hit detection notifier
+  final LayerHitNotifier<int> _polylineHitNotifier = ValueNotifier(null);
+
   List<({LatLng midpoint, String label})> _legLabels = [];
+  double _mapRotation = 0.0;
+  StreamSubscription? _mapEventSub;
+  // Maps each sub-leg index to a visual leg index (merging shape-point gaps)
+  List<int> _subLegToVisualLeg = [];
+
+  // Cached values to avoid recomputation in build
+  List<Marker>? _cachedArrowMarkers;
+  List<int>? _cachedArrowSelection;
+  double? _cachedFitZoom;
+  List<LatLng>? _cachedFitZoomPoints;
 
   bool get _hasRecordedRoute =>
       widget.recordedRoute != null && widget.recordedRoute!.isNotEmpty;
@@ -61,6 +89,12 @@ class _TripMapViewState extends State<TripMapView> {
     super.initState();
     if (!_hasRecordedRoute) _fetchRoutes();
     _centerOnUserLocation();
+    _mapEventSub = _mapController.mapEventStream.listen((event) {
+      if (event is MapEventRotate || event is MapEventRotateEnd) {
+        setState(() => _mapRotation = _mapController.camera.rotation * 3.14159265 / 180.0);
+      }
+    });
+    _polylineHitNotifier.addListener(_onPolylineHit);
   }
 
   Future<void> _centerOnUserLocation() async {
@@ -80,6 +114,9 @@ class _TripMapViewState extends State<TripMapView> {
 
   @override
   void dispose() {
+    _polylineHitNotifier.removeListener(_onPolylineHit);
+    _polylineHitNotifier.dispose();
+    _mapEventSub?.cancel();
     _mapController.dispose();
     super.dispose();
   }
@@ -87,10 +124,17 @@ class _TripMapViewState extends State<TripMapView> {
   @override
   void didUpdateWidget(TripMapView oldWidget) {
     super.didUpdateWidget(oldWidget);
-    if (!listEquals(oldWidget.stops, widget.stops)) {
-      _routeAlternatives = null;
-      _selectedRouteIndex = 0;
+    if (!listEquals(oldWidget.stops, widget.stops) ||
+        oldWidget.showSuggestedRoute != widget.showSuggestedRoute) {
+      _legAlternatives = [];
+      _selectedLegIndices = [];
+      _activeVisualLeg = null;
       _legLabels = [];
+      _subLegToVisualLeg = [];
+      _cachedArrowMarkers = null;
+      _cachedArrowSelection = null;
+      _cachedFitZoom = null;
+      _cachedFitZoomPoints = null;
       if (!_hasRecordedRoute) _fetchRoutes();
     }
   }
@@ -99,29 +143,213 @@ class _TripMapViewState extends State<TripMapView> {
     final points = _stopPoints();
     if (points.length < 2) return;
 
-    // Fetch alternatives for each leg, then combine into full-route options
-    final legAlts = await OsrmService.getRouteLegAlternatives(points);
-    if (!mounted) return;
+    List<List<OsrmRoute>> legAlts;
 
-    final combined = OsrmService.buildCombinedAlternatives(legAlts);
+    if (!widget.showSuggestedRoute) {
+      // Straight-line legs (no OSRM)
+      legAlts = <List<OsrmRoute>>[];
+      for (int i = 0; i < points.length - 1; i++) {
+        final dist = const Distance().as(LengthUnit.Meter, points[i], points[i + 1]);
+        legAlts.add([
+          OsrmRoute(
+            points: [points[i], points[i + 1]],
+            distanceMeters: dist,
+            durationSeconds: 0,
+          ),
+        ]);
+      }
+    } else {
+      legAlts = await OsrmService.getRouteLegAlternatives(points);
+      if (!mounted) return;
+    }
 
-    // Build per-leg distance labels from primary legs
-    final labels = <({LatLng midpoint, String label})>[];
-    for (final alts in legAlts) {
-      final primary = alts.first;
-      final mid = primary.points[primary.points.length ~/ 2];
-      final km = primary.distanceMeters / 1000.0;
-      labels.add((
-        midpoint: mid,
-        label: DistanceCalculator.formatDistance(km),
-      ));
+    // Build sub-leg-to-visual-leg mapping (merge legs between real stops)
+    final stopsWithLoc = widget.stops.where((s) => s.location != null).toList();
+    final mapping = <int>[];
+    int visualLeg = 0;
+    for (int i = 0; i < stopsWithLoc.length - 1; i++) {
+      mapping.add(visualLeg);
+      if (!stopsWithLoc[i + 1].type.isShapeOnly) visualLeg++;
     }
 
     setState(() {
-      _routeAlternatives = combined;
-      _selectedRouteIndex = 0;
-      _legLabels = labels;
+      _legAlternatives = legAlts;
+      _selectedLegIndices = List<int>.filled(legAlts.length, 0);
+      _activeVisualLeg = null;
+      _subLegToVisualLeg = mapping;
+      _cachedArrowMarkers = null;
+      _cachedArrowSelection = null;
+      _recomputeLabels();
     });
+  }
+
+  /// Returns the selected polyline points for each sub-leg.
+  List<List<LatLng>> _getSelectedLegs() {
+    final result = <List<LatLng>>[];
+    for (int i = 0; i < _legAlternatives.length; i++) {
+      final alts = _legAlternatives[i];
+      final sel = i < _selectedLegIndices.length ? _selectedLegIndices[i] : 0;
+      result.add(alts[sel.clamp(0, alts.length - 1)].points);
+    }
+    return result;
+  }
+
+  /// Recomputes distance labels per visual leg based on current selection.
+  void _recomputeLabels() {
+    final points = _stopPoints();
+    final vlCount = _visualLegCount();
+    if (vlCount == 0) {
+      _legLabels = [];
+      return;
+    }
+
+    final mergedDistances = List<double>.filled(vlCount, 0);
+    final mergedAllPoints = List<List<LatLng>>.generate(vlCount, (_) => []);
+    for (int i = 0; i < _legAlternatives.length; i++) {
+      final vl = i < _subLegToVisualLeg.length ? _subLegToVisualLeg[i] : 0;
+      if (vl < vlCount) {
+        final alts = _legAlternatives[i];
+        final sel = i < _selectedLegIndices.length ? _selectedLegIndices[i] : 0;
+        final route = alts[sel.clamp(0, alts.length - 1)];
+        mergedDistances[vl] += route.distanceMeters;
+        mergedAllPoints[vl].addAll(route.points);
+      }
+    }
+
+    final labels = <({LatLng midpoint, String label})>[];
+    for (int vl = 0; vl < vlCount; vl++) {
+      final pts = mergedAllPoints[vl];
+      final mid = pts.isNotEmpty ? pts[pts.length ~/ 2] : points.first;
+      labels.add((
+        midpoint: mid,
+        label: DistanceCalculator.formatDistance(mergedDistances[vl] / 1000.0),
+      ));
+    }
+    _legLabels = labels;
+  }
+
+  int _visualLegCount() {
+    if (_subLegToVisualLeg.isEmpty) return 0;
+    return _subLegToVisualLeg.last + 1;
+  }
+
+  /// Whether any sub-leg in this visual leg has >1 alternative.
+  bool _visualLegHasAlternatives(int vl) {
+    for (int i = 0; i < _subLegToVisualLeg.length; i++) {
+      if (_subLegToVisualLeg[i] == vl && _legAlternatives[i].length > 1) {
+        return true;
+      }
+    }
+    return false;
+  }
+
+  /// Handles polyline tap from the hit notifier.
+  void _onPolylineHit() {
+    final result = _polylineHitNotifier.value;
+    if (result == null || result.hitValues.isEmpty) return;
+    // In edit mode (onMapTap active), don't handle polyline taps
+    if (widget.onMapTap != null) return;
+
+    final tappedVl = result.hitValues.first;
+    setState(() {
+      if (_activeVisualLeg == tappedVl) {
+        _activeVisualLeg = null; // deselect
+      } else {
+        _activeVisualLeg = tappedVl;
+      }
+    });
+  }
+
+  /// Builds the bottom chip bar for the active visual leg.
+  Widget _buildLegAlternativeChips() {
+    final vl = _activeVisualLeg!;
+    final color = AppColors.segmentColors[vl % AppColors.segmentColors.length];
+
+    // Collect sub-legs belonging to this visual leg
+    final subLegs = <int>[];
+    for (int i = 0; i < _subLegToVisualLeg.length; i++) {
+      if (_subLegToVisualLeg[i] == vl) subLegs.add(i);
+    }
+
+    if (!_visualLegHasAlternatives(vl)) {
+      return Container(
+        padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+        decoration: BoxDecoration(
+          color: AppColors.surface.withValues(alpha: 0.95),
+          borderRadius: BorderRadius.circular(AppDimensions.radiusMD),
+        ),
+        child: const Text(
+          'No alternative routes for this leg',
+          style: TextStyle(color: AppColors.textSecondary, fontSize: 13),
+        ),
+      );
+    }
+
+    // Find the sub-leg with alternatives (use the first one that has alts)
+    // For visual legs with multiple sub-legs, we pick alternatives from the
+    // sub-leg that has them (shape-point sub-legs rarely have alternatives)
+    int altSubLeg = subLegs.first;
+    for (final sl in subLegs) {
+      if (_legAlternatives[sl].length > 1) {
+        altSubLeg = sl;
+        break;
+      }
+    }
+    final alts = _legAlternatives[altSubLeg];
+
+    // Compute total distance for each alternative of this sub-leg,
+    // plus the fixed distance from other sub-legs in the same visual leg
+    double fixedDist = 0;
+    for (final sl in subLegs) {
+      if (sl != altSubLeg) {
+        final sel = sl < _selectedLegIndices.length ? _selectedLegIndices[sl] : 0;
+        fixedDist += _legAlternatives[sl][sel.clamp(0, _legAlternatives[sl].length - 1)].distanceMeters;
+      }
+    }
+
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 6),
+      decoration: BoxDecoration(
+        color: AppColors.surface.withValues(alpha: 0.95),
+        borderRadius: BorderRadius.circular(AppDimensions.radiusMD),
+      ),
+      child: SingleChildScrollView(
+        scrollDirection: Axis.horizontal,
+        child: Row(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Container(
+              width: 12, height: 12,
+              margin: const EdgeInsets.only(right: 8),
+              decoration: BoxDecoration(color: color, shape: BoxShape.circle),
+            ),
+            ...List.generate(alts.length, (altIdx) {
+              final totalDist = fixedDist + alts[altIdx].distanceMeters;
+              final km = totalDist / 1000.0;
+              final isSelected = _selectedLegIndices[altSubLeg] == altIdx;
+              final label = altIdx == 0
+                  ? 'Primary (${DistanceCalculator.formatDistance(km)})'
+                  : 'Alt $altIdx (${DistanceCalculator.formatDistance(km)})';
+              return Padding(
+                padding: EdgeInsets.only(right: altIdx < alts.length - 1 ? AppDimensions.paddingSM : 0),
+                child: ChoiceChip(
+                  label: Text(label, style: const TextStyle(fontSize: 12)),
+                  selected: isSelected,
+                  onSelected: (_) {
+                    setState(() {
+                      _selectedLegIndices[altSubLeg] = altIdx;
+                      _cachedArrowMarkers = null;
+                      _cachedArrowSelection = null;
+                      _recomputeLabels();
+                    });
+                  },
+                ),
+              );
+            }),
+          ],
+        ),
+      ),
+    );
   }
 
   @override
@@ -129,17 +357,6 @@ class _TripMapViewState extends State<TripMapView> {
     final stopsWithLocation =
         widget.stops.where((s) => s.location != null).toList();
     final stopPts = _stopPoints();
-
-    // Determine polyline points
-    List<LatLng> primaryPolyline;
-    if (_hasRecordedRoute) {
-      primaryPolyline = _recordedLatLngs();
-    } else if (_routeAlternatives != null &&
-        _routeAlternatives!.isNotEmpty) {
-      primaryPolyline = _routeAlternatives![_selectedRouteIndex].points;
-    } else {
-      primaryPolyline = stopPts;
-    }
 
     // Determine all points for centering (include recorded route points)
     final allPoints = _hasRecordedRoute
@@ -156,27 +373,13 @@ class _TripMapViewState extends State<TripMapView> {
         : LatLng(AppConstants.defaultLat, AppConstants.defaultLng);
 
     final zoom =
-        allPoints.isEmpty ? AppConstants.defaultMapZoom : _fitZoom(allPoints);
+        allPoints.isEmpty ? AppConstants.defaultMapZoom : _fitZoomCached(allPoints);
 
     // Build polyline layers
-    final polylines = <Polyline>[];
-
-    // Show alternative routes (faded) first
-    if (!_hasRecordedRoute &&
-        _routeAlternatives != null &&
-        _routeAlternatives!.length >= 2) {
-      for (int i = 0; i < _routeAlternatives!.length; i++) {
-        if (i == _selectedRouteIndex) continue;
-        final alt = _routeAlternatives![i];
-        if (alt.points.length >= 2) {
-          polylines.add(Polyline(
-            points: alt.points,
-            strokeWidth: AppDimensions.mapLineWidth,
-            color: AppColors.textHint.withValues(alpha: 0.35),
-          ));
-        }
-      }
-    }
+    final polylines = <Polyline<int>>[];
+    final hasLegRoutes = !_hasRecordedRoute && _legAlternatives.isNotEmpty;
+    // Whether polyline tapping is enabled (disabled in edit mode)
+    final enableHit = hasLegRoutes && widget.onMapTap == null;
 
     if (_hasRecordedRoute) {
       // Multi-segment rendering with distinct colors
@@ -189,17 +392,57 @@ class _TripMapViewState extends State<TripMapView> {
         if (segPts.length >= 2) {
           final color = AppColors
               .segmentColors[i % AppColors.segmentColors.length];
-          polylines.add(Polyline(
+          polylines.add(Polyline<int>(
             points: segPts,
             strokeWidth: AppDimensions.mapLineWidth,
             color: color.withValues(alpha: 0.8),
           ));
         }
       }
-    } else if (primaryPolyline.length >= 2) {
-      // Selected estimated route (bright)
-      polylines.add(Polyline(
-        points: primaryPolyline,
+    } else if (hasLegRoutes) {
+      final selectedLegs = _getSelectedLegs();
+
+      // If a visual leg is active, show faded alternatives for that leg first
+      if (_activeVisualLeg != null) {
+        for (int i = 0; i < _legAlternatives.length; i++) {
+          final vl = i < _subLegToVisualLeg.length ? _subLegToVisualLeg[i] : i;
+          if (vl != _activeVisualLeg) continue;
+          final sel = i < _selectedLegIndices.length ? _selectedLegIndices[i] : 0;
+          for (int altIdx = 0; altIdx < _legAlternatives[i].length; altIdx++) {
+            if (altIdx == sel) continue;
+            final alt = _legAlternatives[i][altIdx];
+            if (alt.points.length >= 2) {
+              polylines.add(Polyline<int>(
+                points: alt.points,
+                strokeWidth: AppDimensions.mapLineWidth,
+                color: AppColors.textHint.withValues(alpha: 0.35),
+              ));
+            }
+          }
+        }
+      }
+
+      // Selected polylines per sub-leg (colored by visual leg)
+      for (int i = 0; i < selectedLegs.length; i++) {
+        if (selectedLegs[i].length >= 2) {
+          final vl = i < _subLegToVisualLeg.length ? _subLegToVisualLeg[i] : i;
+          final color = AppColors
+              .segmentColors[vl % AppColors.segmentColors.length];
+          final isActive = _activeVisualLeg == vl;
+          polylines.add(Polyline<int>(
+            points: selectedLegs[i],
+            strokeWidth: isActive
+                ? AppDimensions.mapLineWidth + 2
+                : AppDimensions.mapLineWidth,
+            color: color.withValues(alpha: isActive ? 1.0 : 0.8),
+            hitValue: vl,
+          ));
+        }
+      }
+    } else if (stopPts.length >= 2) {
+      // Fallback: straight line between stops
+      polylines.add(Polyline<int>(
+        points: stopPts,
         strokeWidth: AppDimensions.mapLineWidth,
         color: AppColors.primary.withValues(alpha: 0.8),
       ));
@@ -212,9 +455,14 @@ class _TripMapViewState extends State<TripMapView> {
           options: MapOptions(
             initialCenter: center,
             initialZoom: zoom,
+            interactionOptions: const InteractionOptions(
+              flags: InteractiveFlag.all,
+            ),
             onTap: widget.onMapTap != null
                 ? (_, point) => widget.onMapTap!(point)
-                : null,
+                : (_activeVisualLeg != null
+                    ? (_, _) => setState(() => _activeVisualLeg = null)
+                    : null),
           ),
           children: [
             TileLayer(
@@ -222,28 +470,71 @@ class _TripMapViewState extends State<TripMapView> {
               userAgentPackageName: 'com.ridesout.app',
               tileProvider: TileCacheService.tileProvider,
             ),
-            if (polylines.isNotEmpty) PolylineLayer(polylines: polylines),
+            if (polylines.isNotEmpty)
+              PolylineLayer<int>(
+                polylines: polylines,
+                hitNotifier: enableHit ? _polylineHitNotifier : null,
+                minimumHitbox: 15,
+              ),
+            // Direction arrows for per-leg routes (cached)
+            if (hasLegRoutes)
+              MarkerLayer(
+                markers: _getArrowMarkers(),
+              ),
             CurrentLocationLayer(),
-            MarkerLayer(
-              markers: stopsWithLocation.map((stop) {
-                final isWaypoint = stop.type == StopType.waypoint;
-                final size = isWaypoint
-                    ? AppDimensions.mapWaypointMarkerSize
-                    : AppDimensions.mapMarkerSize;
-                return Marker(
-                  point: LatLng(
-                      stop.location!.latitude, stop.location!.longitude),
-                  width: size,
-                  height: isWaypoint ? size : size + 8,
-                  child: StopMarkerWidget(
-                    stop: stop,
-                    onTap: widget.onStopTap != null
-                        ? () => widget.onStopTap!(stop)
-                        : null,
-                  ),
-                );
-              }).toList(),
+            MarkerClusterLayerWidget(
+              options: MarkerClusterLayerOptions(
+                maxClusterRadius: 80,
+                disableClusteringAtZoom: 15,
+                markers: stopsWithLocation
+                    .where((s) => widget.shapeMode || !s.type.isShapeOnly)
+                    .map((stop) {
+                  final isShapePoint = stop.type.isShapeOnly;
+                  final isWaypoint = stop.type == StopType.waypoint;
+                  final size = isShapePoint
+                      ? AppDimensions.mapShapePointMarkerSize
+                      : isWaypoint
+                          ? AppDimensions.mapWaypointMarkerSize
+                          : AppDimensions.mapMarkerSize;
+                  return Marker(
+                    point: LatLng(
+                        stop.location!.latitude, stop.location!.longitude),
+                    width: size,
+                    height: (isWaypoint || isShapePoint) ? size : size + 8,
+                    child: StopMarkerWidget(
+                      stop: stop,
+                      onTap: widget.onStopTap != null
+                          ? () => widget.onStopTap!(stop)
+                          : null,
+                    ),
+                  );
+                }).toList(),
+                builder: (context, markers) {
+                  return Container(
+                    width: 40,
+                    height: 40,
+                    decoration: BoxDecoration(
+                      color: AppColors.primary,
+                      shape: BoxShape.circle,
+                      border: Border.all(color: Colors.white, width: 2),
+                    ),
+                    child: Center(
+                      child: Text(
+                        '${markers.length}',
+                        style: const TextStyle(
+                          color: Colors.white,
+                          fontWeight: FontWeight.bold,
+                          fontSize: 14,
+                        ),
+                      ),
+                    ),
+                  );
+                },
+              ),
             ),
+            // POI markers
+            if (widget.poiMarkers != null && widget.poiMarkers!.isNotEmpty)
+              MarkerLayer(markers: widget.poiMarkers!),
             // Distance labels between stops
             if (_legLabels.isNotEmpty && !_hasRecordedRoute)
               MarkerLayer(
@@ -285,43 +576,93 @@ class _TripMapViewState extends State<TripMapView> {
           ],
         ),
 
-        // Route selection chips (always show when routes are loaded, no recorded route)
+        // Compass + Zoom buttons
+        Positioned(
+          top: AppDimensions.paddingMD,
+          right: AppDimensions.paddingMD,
+          child: Column(
+            children: [
+              CompassButton(
+                mapController: _mapController,
+                rotation: _mapRotation,
+              ),
+              const SizedBox(height: 8),
+              ZoomButtons(
+                onZoomIn: () {
+                  final cam = _mapController.camera;
+                  _mapController.move(cam.center, (cam.zoom + 1).clamp(3, 18));
+                },
+                onZoomOut: () {
+                  final cam = _mapController.camera;
+                  _mapController.move(cam.center, (cam.zoom - 1).clamp(3, 18));
+                },
+              ),
+            ],
+          ),
+        ),
+
+        // Per-leg alternative selection chips
         if (!_hasRecordedRoute &&
-            _routeAlternatives != null &&
-            _routeAlternatives!.isNotEmpty)
+            _activeVisualLeg != null &&
+            _legAlternatives.isNotEmpty)
           Positioned(
             bottom: AppDimensions.paddingMD,
             left: AppDimensions.paddingMD,
             right: AppDimensions.paddingMD,
-            child: SingleChildScrollView(
-              scrollDirection: Axis.horizontal,
-              child: Row(
-                children: List.generate(_routeAlternatives!.length, (i) {
-                  final alt = _routeAlternatives![i];
-                  final isSelected = i == _selectedRouteIndex;
-                  final distKm = alt.distanceMeters / 1000.0;
-                  final label = distKm > 0
-                      ? 'Route ${i + 1} (${distKm.toStringAsFixed(1)} km)'
-                      : 'Route ${i + 1}';
-                  return Padding(
-                    padding: EdgeInsets.only(
-                        right: i < _routeAlternatives!.length - 1
-                            ? AppDimensions.paddingSM
-                            : 0),
-                    child: ChoiceChip(
-                      label: Text(label),
-                      selected: isSelected,
-                      onSelected: (_) {
-                        setState(() => _selectedRouteIndex = i);
-                      },
-                    ),
-                  );
-                }),
-              ),
-            ),
+            child: _buildLegAlternativeChips(),
           ),
       ],
     );
+  }
+
+  List<Marker> _getArrowMarkers() {
+    if (_cachedArrowMarkers != null &&
+        listEquals(_cachedArrowSelection, _selectedLegIndices)) {
+      return _cachedArrowMarkers!;
+    }
+    final markers = <Marker>[];
+    final legs = _getSelectedLegs();
+    for (int i = 0; i < legs.length; i++) {
+      markers.addAll(_buildArrowMarkers(
+        legs[i],
+        AppColors.segmentColors[
+            (i < _subLegToVisualLeg.length ? _subLegToVisualLeg[i] : i) %
+                AppColors.segmentColors.length],
+      ));
+    }
+    _cachedArrowMarkers = markers;
+    _cachedArrowSelection = List<int>.from(_selectedLegIndices);
+    return markers;
+  }
+
+  List<Marker> _buildArrowMarkers(List<LatLng> points, Color color) {
+    if (points.length < 2) return [];
+    final markers = <Marker>[];
+    for (final fraction in [0.25, 0.5, 0.75]) {
+      final idx =
+          (points.length * fraction).floor().clamp(0, points.length - 2);
+      final bearing =
+          const Distance().bearing(points[idx], points[idx + 1]);
+      markers.add(Marker(
+        point: points[idx],
+        width: 20,
+        height: 20,
+        child: Transform.rotate(
+          angle: bearing * pi / 180.0,
+          child: Icon(Icons.navigation, size: 14, color: color),
+        ),
+      ));
+    }
+    return markers;
+  }
+
+  double _fitZoomCached(List<LatLng> points) {
+    if (_cachedFitZoom != null && identical(points, _cachedFitZoomPoints)) {
+      return _cachedFitZoom!;
+    }
+    _cachedFitZoomPoints = points;
+    _cachedFitZoom = _fitZoom(points);
+    return _cachedFitZoom!;
   }
 
   double _fitZoom(List<LatLng> points) {

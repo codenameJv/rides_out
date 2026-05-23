@@ -58,6 +58,7 @@ class AppColors {
   static const Color stopRest = Color(0xFF78909C);
   static const Color stopDestination = Color(0xFFFF8C00);
   static const Color stopWaypoint = Color(0xFF90A4AE);
+  static const Color stopShapePoint = Color(0xFF546E7A);
 
   static Color expenseCategoryColor(String category) {
     switch (category.toLowerCase()) {
@@ -102,6 +103,8 @@ class AppColors {
         return stopDestination;
       case 'waypoint':
         return stopWaypoint;
+      case 'shapepoint':
+        return stopShapePoint;
       default:
         return other;
     }

@@ -54,9 +54,14 @@ class RideTrackingNotifier extends StateNotifier<RideTrackingState> {
 
   final _service = RideTrackingService.instance;
 
+  // Mutable internal list to avoid O(n) copies on every GPS point
+  final List<RoutePointModel> _pointBuffer = [];
+
   Future<bool> startTracking(String tripId, {bool appendMode = false}) async {
     final hasPermission = await _service.ensurePermission();
     if (!hasPermission) return false;
+
+    _pointBuffer.clear();
 
     state = RideTrackingState(
       isTracking: true,
@@ -66,20 +71,19 @@ class RideTrackingNotifier extends StateNotifier<RideTrackingState> {
     );
 
     await _service.start(onPoint: (point) {
-      final newPoints = [...state.points, point];
-      double dist = 0;
-      if (newPoints.length >= 2) {
-        final prev = newPoints[newPoints.length - 2];
-        dist = state.distanceKm +
-            DistanceCalculator.distanceKm(
-              prev.latitude,
-              prev.longitude,
-              point.latitude,
-              point.longitude,
-            );
+      double dist = state.distanceKm;
+      if (_pointBuffer.isNotEmpty) {
+        final prev = _pointBuffer.last;
+        dist += DistanceCalculator.distanceKm(
+          prev.latitude,
+          prev.longitude,
+          point.latitude,
+          point.longitude,
+        );
       }
+      _pointBuffer.add(point);
       state = state.copyWith(
-        points: newPoints,
+        points: List.unmodifiable(_pointBuffer),
         distanceKm: dist,
         elapsedDuration: state.startTime != null
             ? DateTime.now().difference(state.startTime!)
@@ -131,12 +135,14 @@ class RideTrackingNotifier extends StateNotifier<RideTrackingState> {
       }
     }
 
+    _pointBuffer.clear();
     state = const RideTrackingState();
   }
 
   /// Stop tracking without saving.
   void cancel() {
     _service.stop();
+    _pointBuffer.clear();
     state = const RideTrackingState();
   }
 }

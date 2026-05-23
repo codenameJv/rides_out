@@ -125,7 +125,7 @@ class ReplayControls extends StatelessWidget {
                   minimumSize: const Size(48, 40),
                 ),
                 child: Text(
-                  '${speed.toStringAsFixed(0)}x',
+                  '${speed == speed.roundToDouble() ? speed.toStringAsFixed(0) : speed.toString()}x',
                   style: AppTextStyles.titleMedium.copyWith(
                     color: AppColors.primary,
                   ),

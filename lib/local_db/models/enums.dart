@@ -79,7 +79,10 @@ enum StopType {
   rest,
   destination,
   other,
-  waypoint;
+  waypoint,
+  shapePoint;
+
+  bool get isShapeOnly => this == StopType.shapePoint;
 
   String get label {
     switch (this) {
@@ -103,6 +106,8 @@ enum StopType {
         return 'Other';
       case StopType.waypoint:
         return 'Waypoint';
+      case StopType.shapePoint:
+        return 'Shape Point';
     }
   }
 
@@ -128,6 +133,8 @@ enum StopType {
         return '📌';
       case StopType.waypoint:
         return '◆';
+      case StopType.shapePoint:
+        return '·';
     }
   }
 }

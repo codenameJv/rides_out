@@ -18,6 +18,21 @@ class StopMarkerWidget extends StatelessWidget {
   Widget build(BuildContext context) {
     final color = AppColors.stopTypeColor(stop.type.name);
 
+    if (stop.type == StopType.shapePoint) {
+      return GestureDetector(
+        onTap: onTap,
+        child: Container(
+          width: AppDimensions.mapShapePointMarkerSize,
+          height: AppDimensions.mapShapePointMarkerSize,
+          decoration: BoxDecoration(
+            color: color.withValues(alpha: 0.5),
+            shape: BoxShape.circle,
+            border: Border.all(color: Colors.white.withValues(alpha: 0.6), width: 1),
+          ),
+        ),
+      );
+    }
+
     if (stop.type == StopType.waypoint) {
       return GestureDetector(
         onTap: onTap,

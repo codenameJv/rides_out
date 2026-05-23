@@ -26,5 +26,6 @@ class AppDimensions {
   // Map
   static const double mapMarkerSize = 40.0;
   static const double mapWaypointMarkerSize = 20.0;
+  static const double mapShapePointMarkerSize = 14.0;
   static const double mapLineWidth = 3.0;
 }

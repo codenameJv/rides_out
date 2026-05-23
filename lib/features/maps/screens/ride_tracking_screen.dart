@@ -20,7 +20,9 @@ import '../../../shared/widgets/confirm_dialog.dart';
 import '../../itinerary/providers/itinerary_provider.dart';
 import '../../trips/providers/trips_provider.dart';
 import '../providers/ride_tracking_provider.dart';
+import '../widgets/compass_button.dart';
 import '../widgets/stop_marker.dart';
+import '../widgets/zoom_buttons.dart';
 
 class RideTrackingScreen extends ConsumerStatefulWidget {
   final String tripId;
@@ -48,10 +50,17 @@ class _RideTrackingScreenState extends ConsumerState<RideTrackingScreen> {
   List<({LatLng midpoint, String label})> _legLabels = [];
   // Existing segments from previous recording sessions (append mode)
   List<List<LatLng>> _existingSegments = [];
+  double _mapRotation = 0.0;
+  StreamSubscription? _mapEventSub;
 
   @override
   void initState() {
     super.initState();
+    _mapEventSub = _mapController.mapEventStream.listen((event) {
+      if (event is MapEventRotate || event is MapEventRotateEnd) {
+        setState(() => _mapRotation = _mapController.camera.rotation * 3.14159265 / 180.0);
+      }
+    });
     WidgetsBinding.instance.addPostFrameCallback((_) {
       if (widget.appendMode) _loadExistingSegments();
       _startTracking();
@@ -183,6 +192,7 @@ class _RideTrackingScreenState extends ConsumerState<RideTrackingScreen> {
   @override
   void dispose() {
     _elapsedTimer?.cancel();
+    _mapEventSub?.cancel();
     _mapController.dispose();
     super.dispose();
   }
@@ -279,10 +289,12 @@ class _RideTrackingScreenState extends ConsumerState<RideTrackingScreen> {
                     ),
                   ],
                 ),
-              // Itinerary stop markers
+              // Itinerary stop markers (exclude shape points)
               if (stopsWithLocation.isNotEmpty)
                 MarkerLayer(
-                  markers: stopsWithLocation.map((stop) {
+                  markers: stopsWithLocation
+                      .where((s) => !s.type.isShapeOnly)
+                      .map((stop) {
                     final isWaypoint = stop.type == StopType.waypoint;
                     final size = isWaypoint
                         ? AppDimensions.mapWaypointMarkerSize
@@ -441,6 +453,33 @@ class _RideTrackingScreenState extends ConsumerState<RideTrackingScreen> {
                 ),
               ),
             ),
+
+          // Compass + Zoom
+          Positioned(
+            top: MediaQuery.of(context).padding.top + 76,
+            right: AppDimensions.paddingMD,
+            child: Column(
+              children: [
+                CompassButton(
+                  mapController: _mapController,
+                  rotation: _mapRotation,
+                ),
+                const SizedBox(height: 8),
+                ZoomButtons(
+                  onZoomIn: () {
+                    final cam = _mapController.camera;
+                    _mapController.move(
+                        cam.center, (cam.zoom + 1).clamp(3, 18));
+                  },
+                  onZoomOut: () {
+                    final cam = _mapController.camera;
+                    _mapController.move(
+                        cam.center, (cam.zoom - 1).clamp(3, 18));
+                  },
+                ),
+              ],
+            ),
+          ),
 
           // Bottom controls
           Positioned(

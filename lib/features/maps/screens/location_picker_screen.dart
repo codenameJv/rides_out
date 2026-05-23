@@ -33,6 +33,7 @@ class _LocationPickerScreenState extends State<LocationPickerScreen> {
   final MapController _mapController = MapController();
   final TextEditingController _searchController = TextEditingController();
   Timer? _debounce;
+  Timer? _reverseGeocodeDebounce;
 
   LatLng? _selectedPoint;
   String? _placeName;
@@ -56,6 +57,7 @@ class _LocationPickerScreenState extends State<LocationPickerScreen> {
   @override
   void dispose() {
     _debounce?.cancel();
+    _reverseGeocodeDebounce?.cancel();
     _searchController.dispose();
     _mapController.dispose();
     super.dispose();
@@ -67,10 +69,16 @@ class _LocationPickerScreenState extends State<LocationPickerScreen> {
       _placeName = null;
       _showResults = false;
     });
-    _reverseGeocode(point);
+    // Debounce reverse geocoding to avoid flooding API on rapid taps
+    _reverseGeocodeDebounce?.cancel();
+    _reverseGeocodeDebounce = Timer(
+      const Duration(milliseconds: 400),
+      () => _reverseGeocode(point),
+    );
   }
 
   Future<void> _reverseGeocode(LatLng point) async {
+    if (!mounted) return;
     setState(() => _isReversing = true);
     final name =
         await NominatimService.reverse(point.latitude, point.longitude);
@@ -91,7 +99,9 @@ class _LocationPickerScreenState extends State<LocationPickerScreen> {
       });
       return;
     }
-    _debounce = Timer(const Duration(seconds: 1), () => _performSearch(query));
+    _debounce = Timer(const Duration(seconds: 1), () {
+      if (mounted) _performSearch(query);
+    });
   }
 
   Future<void> _performSearch(String query) async {
@@ -177,11 +187,11 @@ class _LocationPickerScreenState extends State<LocationPickerScreen> {
                 tileProvider: TileCacheService.tileProvider,
               ),
               CurrentLocationLayer(),
-              // Existing stops from the itinerary
+              // Existing stops from the itinerary (exclude shape points)
               if (widget.existingStops.isNotEmpty)
                 MarkerLayer(
                   markers: widget.existingStops
-                      .where((s) => s.location != null)
+                      .where((s) => s.location != null && !s.type.isShapeOnly)
                       .map((stop) {
                     final isWaypoint = stop.type == StopType.waypoint;
                     final size = isWaypoint
