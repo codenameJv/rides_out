@@ -51,10 +51,10 @@ class _TripMapViewState extends State<TripMapView> {
   List<List<OsrmRoute>> _legAlternatives = [];
   // Selected alternative index per sub-leg (default 0 = primary)
   List<int> _selectedLegIndices = [];
-  // Which visual leg is actively showing alternative chips (null = none)
-  int? _activeVisualLeg;
   // Polyline hit detection notifier
   final LayerHitNotifier<int> _polylineHitNotifier = ValueNotifier(null);
+  // Timestamp of last polyline hit (prevents onMapTap from firing on same tap)
+  DateTime? _lastPolylineHitTime;
 
   List<({LatLng midpoint, String label})> _legLabels = [];
   double _mapRotation = 0.0;
@@ -128,7 +128,6 @@ class _TripMapViewState extends State<TripMapView> {
         oldWidget.showSuggestedRoute != widget.showSuggestedRoute) {
       _legAlternatives = [];
       _selectedLegIndices = [];
-      _activeVisualLeg = null;
       _legLabels = [];
       _subLegToVisualLeg = [];
       _cachedArrowMarkers = null;
@@ -175,7 +174,6 @@ class _TripMapViewState extends State<TripMapView> {
     setState(() {
       _legAlternatives = legAlts;
       _selectedLegIndices = List<int>.filled(legAlts.length, 0);
-      _activeVisualLeg = null;
       _subLegToVisualLeg = mapping;
       _cachedArrowMarkers = null;
       _cachedArrowSelection = null;
@@ -233,123 +231,28 @@ class _TripMapViewState extends State<TripMapView> {
     return _subLegToVisualLeg.last + 1;
   }
 
-  /// Whether any sub-leg in this visual leg has >1 alternative.
-  bool _visualLegHasAlternatives(int vl) {
-    for (int i = 0; i < _subLegToVisualLeg.length; i++) {
-      if (_subLegToVisualLeg[i] == vl && _legAlternatives[i].length > 1) {
-        return true;
-      }
-    }
-    return false;
-  }
-
-  /// Handles polyline tap from the hit notifier.
+  /// Handles polyline tap to select an alternative route.
   void _onPolylineHit() {
     final result = _polylineHitNotifier.value;
     if (result == null || result.hitValues.isEmpty) return;
-    // In edit mode (onMapTap active), don't handle polyline taps
-    if (widget.onMapTap != null) return;
 
-    final tappedVl = result.hitValues.first;
-    setState(() {
-      if (_activeVisualLeg == tappedVl) {
-        _activeVisualLeg = null; // deselect
-      } else {
-        _activeVisualLeg = tappedVl;
-      }
-    });
-  }
+    final hitValue = result.hitValues.first;
+    final subLeg = hitValue ~/ 100;
+    final altIndex = hitValue % 100;
 
-  /// Builds the bottom chip bar for the active visual leg.
-  Widget _buildLegAlternativeChips() {
-    final vl = _activeVisualLeg!;
-    final color = AppColors.segmentColors[vl % AppColors.segmentColors.length];
-
-    // Collect sub-legs belonging to this visual leg
-    final subLegs = <int>[];
-    for (int i = 0; i < _subLegToVisualLeg.length; i++) {
-      if (_subLegToVisualLeg[i] == vl) subLegs.add(i);
+    if (subLeg >= 0 &&
+        subLeg < _legAlternatives.length &&
+        altIndex >= 0 &&
+        altIndex < _legAlternatives[subLeg].length &&
+        _selectedLegIndices[subLeg] != altIndex) {
+      _lastPolylineHitTime = DateTime.now();
+      setState(() {
+        _selectedLegIndices[subLeg] = altIndex;
+        _cachedArrowMarkers = null;
+        _cachedArrowSelection = null;
+        _recomputeLabels();
+      });
     }
-
-    if (!_visualLegHasAlternatives(vl)) {
-      return Container(
-        padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
-        decoration: BoxDecoration(
-          color: AppColors.surface.withValues(alpha: 0.95),
-          borderRadius: BorderRadius.circular(AppDimensions.radiusMD),
-        ),
-        child: const Text(
-          'No alternative routes for this leg',
-          style: TextStyle(color: AppColors.textSecondary, fontSize: 13),
-        ),
-      );
-    }
-
-    // Find the sub-leg with alternatives (use the first one that has alts)
-    // For visual legs with multiple sub-legs, we pick alternatives from the
-    // sub-leg that has them (shape-point sub-legs rarely have alternatives)
-    int altSubLeg = subLegs.first;
-    for (final sl in subLegs) {
-      if (_legAlternatives[sl].length > 1) {
-        altSubLeg = sl;
-        break;
-      }
-    }
-    final alts = _legAlternatives[altSubLeg];
-
-    // Compute total distance for each alternative of this sub-leg,
-    // plus the fixed distance from other sub-legs in the same visual leg
-    double fixedDist = 0;
-    for (final sl in subLegs) {
-      if (sl != altSubLeg) {
-        final sel = sl < _selectedLegIndices.length ? _selectedLegIndices[sl] : 0;
-        fixedDist += _legAlternatives[sl][sel.clamp(0, _legAlternatives[sl].length - 1)].distanceMeters;
-      }
-    }
-
-    return Container(
-      padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 6),
-      decoration: BoxDecoration(
-        color: AppColors.surface.withValues(alpha: 0.95),
-        borderRadius: BorderRadius.circular(AppDimensions.radiusMD),
-      ),
-      child: SingleChildScrollView(
-        scrollDirection: Axis.horizontal,
-        child: Row(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            Container(
-              width: 12, height: 12,
-              margin: const EdgeInsets.only(right: 8),
-              decoration: BoxDecoration(color: color, shape: BoxShape.circle),
-            ),
-            ...List.generate(alts.length, (altIdx) {
-              final totalDist = fixedDist + alts[altIdx].distanceMeters;
-              final km = totalDist / 1000.0;
-              final isSelected = _selectedLegIndices[altSubLeg] == altIdx;
-              final label = altIdx == 0
-                  ? 'Primary (${DistanceCalculator.formatDistance(km)})'
-                  : 'Alt $altIdx (${DistanceCalculator.formatDistance(km)})';
-              return Padding(
-                padding: EdgeInsets.only(right: altIdx < alts.length - 1 ? AppDimensions.paddingSM : 0),
-                child: ChoiceChip(
-                  label: Text(label, style: const TextStyle(fontSize: 12)),
-                  selected: isSelected,
-                  onSelected: (_) {
-                    setState(() {
-                      _selectedLegIndices[altSubLeg] = altIdx;
-                      _cachedArrowMarkers = null;
-                      _cachedArrowSelection = null;
-                      _recomputeLabels();
-                    });
-                  },
-                ),
-              );
-            }),
-          ],
-        ),
-      ),
-    );
   }
 
   @override
@@ -378,8 +281,8 @@ class _TripMapViewState extends State<TripMapView> {
     // Build polyline layers
     final polylines = <Polyline<int>>[];
     final hasLegRoutes = !_hasRecordedRoute && _legAlternatives.isNotEmpty;
-    // Whether polyline tapping is enabled (disabled in edit mode)
-    final enableHit = hasLegRoutes && widget.onMapTap == null;
+    // Enable polyline tapping in normal mode and shape mode (not edit mode)
+    final enableHit = hasLegRoutes && (widget.onMapTap == null || widget.shapeMode);
 
     if (_hasRecordedRoute) {
       // Multi-segment rendering with distinct colors
@@ -402,22 +305,19 @@ class _TripMapViewState extends State<TripMapView> {
     } else if (hasLegRoutes) {
       final selectedLegs = _getSelectedLegs();
 
-      // If a visual leg is active, show faded alternatives for that leg first
-      if (_activeVisualLeg != null) {
-        for (int i = 0; i < _legAlternatives.length; i++) {
-          final vl = i < _subLegToVisualLeg.length ? _subLegToVisualLeg[i] : i;
-          if (vl != _activeVisualLeg) continue;
-          final sel = i < _selectedLegIndices.length ? _selectedLegIndices[i] : 0;
-          for (int altIdx = 0; altIdx < _legAlternatives[i].length; altIdx++) {
-            if (altIdx == sel) continue;
-            final alt = _legAlternatives[i][altIdx];
-            if (alt.points.length >= 2) {
-              polylines.add(Polyline<int>(
-                points: alt.points,
-                strokeWidth: AppDimensions.mapLineWidth,
-                color: AppColors.textHint.withValues(alpha: 0.35),
-              ));
-            }
+      // Show non-selected alternatives as faded lines (rendered first, behind selected)
+      for (int i = 0; i < _legAlternatives.length; i++) {
+        final sel = i < _selectedLegIndices.length ? _selectedLegIndices[i] : 0;
+        for (int altIdx = 0; altIdx < _legAlternatives[i].length; altIdx++) {
+          if (altIdx == sel) continue;
+          final alt = _legAlternatives[i][altIdx];
+          if (alt.points.length >= 2) {
+            polylines.add(Polyline<int>(
+              points: alt.points,
+              strokeWidth: AppDimensions.mapLineWidth - 1,
+              color: AppColors.textHint.withValues(alpha: 0.3),
+              hitValue: i * 100 + altIdx,
+            ));
           }
         }
       }
@@ -426,16 +326,14 @@ class _TripMapViewState extends State<TripMapView> {
       for (int i = 0; i < selectedLegs.length; i++) {
         if (selectedLegs[i].length >= 2) {
           final vl = i < _subLegToVisualLeg.length ? _subLegToVisualLeg[i] : i;
+          final sel = i < _selectedLegIndices.length ? _selectedLegIndices[i] : 0;
           final color = AppColors
               .segmentColors[vl % AppColors.segmentColors.length];
-          final isActive = _activeVisualLeg == vl;
           polylines.add(Polyline<int>(
             points: selectedLegs[i],
-            strokeWidth: isActive
-                ? AppDimensions.mapLineWidth + 2
-                : AppDimensions.mapLineWidth,
-            color: color.withValues(alpha: isActive ? 1.0 : 0.8),
-            hitValue: vl,
+            strokeWidth: AppDimensions.mapLineWidth,
+            color: color.withValues(alpha: 0.8),
+            hitValue: i * 100 + sel,
           ));
         }
       }
@@ -459,10 +357,16 @@ class _TripMapViewState extends State<TripMapView> {
               flags: InteractiveFlag.all,
             ),
             onTap: widget.onMapTap != null
-                ? (_, point) => widget.onMapTap!(point)
-                : (_activeVisualLeg != null
-                    ? (_, _) => setState(() => _activeVisualLeg = null)
-                    : null),
+                ? (_, point) {
+                    // Skip if a polyline was just tapped (prevents double-handling)
+                    if (_lastPolylineHitTime != null &&
+                        DateTime.now().difference(_lastPolylineHitTime!) <
+                            const Duration(milliseconds: 200)) {
+                      return;
+                    }
+                    widget.onMapTap!(point);
+                  }
+                : null,
           ),
           children: [
             TileLayer(
@@ -601,16 +505,6 @@ class _TripMapViewState extends State<TripMapView> {
           ),
         ),
 
-        // Per-leg alternative selection chips
-        if (!_hasRecordedRoute &&
-            _activeVisualLeg != null &&
-            _legAlternatives.isNotEmpty)
-          Positioned(
-            bottom: AppDimensions.paddingMD,
-            left: AppDimensions.paddingMD,
-            right: AppDimensions.paddingMD,
-            child: _buildLegAlternativeChips(),
-          ),
       ],
     );
   }

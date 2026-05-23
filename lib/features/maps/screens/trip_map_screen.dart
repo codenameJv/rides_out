@@ -301,7 +301,7 @@ class _TripMapScreenState extends ConsumerState<TripMapScreen> {
           ),
           IconButton(
             icon: Icon(_shapeMode ? Icons.timeline : Icons.timeline_outlined),
-            tooltip: _shapeMode ? 'Exit shape mode' : 'Shape route',
+            tooltip: _shapeMode ? 'Exit customize' : 'Customize route',
             color: _shapeMode ? AppColors.primary : null,
             onPressed: _toggleShapeMode,
           ),
@@ -365,7 +365,7 @@ class _TripMapScreenState extends ConsumerState<TripMapScreen> {
                             size: 16, color: AppColors.stopShapePoint),
                         const SizedBox(width: 8),
                         Text(
-                          'Tap map to shape \u00B7 Tap point to remove',
+                          'Tap route to switch \u00B7 Tap map to reshape',
                           style: AppTextStyles.bodySmall.copyWith(
                             color: AppColors.stopShapePoint,
                             fontWeight: FontWeight.w600,
